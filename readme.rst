@@ -3,6 +3,8 @@ hxsocks
 
 A better encrypted socks proxy.
 
+2018.5.30: update key exchange method
+
 features
 --------
 

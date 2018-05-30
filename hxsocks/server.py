@@ -270,11 +270,8 @@ class HXsocksHandler:
                 req_len, = struct.unpack('>H', req_len)
                 data = await self.read(req_len)
                 data = io.BytesIO(data)
-                ts = data.read(4)
-                if abs(struct.unpack('>I', ts)[0] - time.time()) > 600:
-                    self.logger.error('bad timestamp. {}'.format(self.client_address))
-                    await self.play_dead()
-                    return
+                ts = int(time.time()) // 30
+
                 pklen = data.read(1)[0]
                 client_pkey = data.read(pklen)
                 client_auth = data.read(32)
@@ -288,13 +285,15 @@ class HXsocksHandler:
                     data = struct.pack('>H', len(data)) + data
                     client_writer.write(self.encryptor.encrypt(data))
 
-                client = None
-                for user, passwd in KM.iter_user():
-                    h = hmac.new(passwd.encode(), ts + client_pkey + user.encode(), hashlib.sha256).digest()
-                    if compare_digest(h, client_auth):
-                        client = user
-                        break
-                else:
+                def auth():
+                    for _ts in [ts, ts - 1, ts + 1]:
+                        for user, passwd in KM.iter_user():
+                            h = hmac.new(passwd.encode(), struct.pack('>I', _ts) + client_pkey + user.encode(), hashlib.sha256).digest()
+                            if compare_digest(h, client_auth):
+                                return user
+
+                client = auth()
+                if not client:
                     self.logger.error('user not found. {}'.format(self.client_address))
                     await self.play_dead()
                     return
@@ -385,6 +384,19 @@ class HXsocksHandler:
                 remote_writer.close()
                 if context.readable or context.writeable:
                     return
+                continue
+            elif cmd == 12:  # get public key
+                req_len = await self.read(2)
+                req_len, = struct.unpack('>H', req_len)
+                data = await self.read(req_len)
+                # drop data
+                # return public key with padding
+                rint = random.randint(64, 2048)
+                scert = KM.SERVER_CERT.get_pub_key()
+                data = struct.pack('>H', len(scert)) + scert + os.urandom(rint)
+                data = struct.pack('>H', len(data)) + data
+                # the first response, just encrypt and sent
+                client_writer.write(self.encryptor.encrypt(data))
                 continue
             else:
                 # TODO: security
