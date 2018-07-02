@@ -99,7 +99,7 @@ class hxs2_connection():
                 # chunk size shoule be lower than 16kB
                 frame_data = await asyncio.wait_for(fut, timeout=5)
                 frame_data = self.__cipher.decrypt(frame_data)
-            except (OSError, InvalidTag) as e:
+            except (OSError, InvalidTag, asyncio.TimeoutError) as e:
                 # something went wrong...
                 self._logger.debug('read frame error: %r' % e)
                 break
@@ -196,6 +196,7 @@ class hxs2_connection():
 
     async def create_connection(self, stream_id, host, port, proxy):
         self._logger.info('connecting %s:%s via %s' % (host, port, proxy))
+        t = time.time()
         try:
             reader, writer = await open_connection(host, port, self._proxy)
         except Exception as e:
@@ -205,7 +206,13 @@ class hxs2_connection():
             await self.send_frame(3, 0, stream_id, data)
         else:
             # tell client request success, header frame, first byte is \x00
-            self._logger.debug('connect %s:%s connected' % (host, port))
+            t = time.time() - t
+            self._logger.info('connect %s:%s connected, %.3fs' % (host, port, t))
+            # client may reset the connection
+            # TODO: maybe keep this connection for later?
+            if stream_id in self._stream_status and self._stream_status[stream_id] == CLOSED:
+                writer.close()
+                return
             data = b'\x00' * random.randint(64, 256)
             await self.send_frame(1, 0, stream_id, data)
             # registor stream

@@ -224,7 +224,7 @@ class HXsocksHandler:
             self.logger.error('iv reused, {}'.format(self.client_address))
             await self.play_dead()
             return
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
             self.logger.warning('iv read failed, {}'.format(self.client_address))
             return
 
