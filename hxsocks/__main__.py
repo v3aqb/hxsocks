@@ -28,43 +28,49 @@ from .server import HandlerFactory, HXsocksHandler, KeyManager, ECC
 
 from concurrent.futures import ThreadPoolExecutor
 
-if sys.platform == 'win32':
-    loop = asyncio.ProactorEventLoop()
-    asyncio.set_event_loop(loop)
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-c', required=True, help="config file")
-args = parser.parse_args()
+def main():
+    if sys.platform == 'win32':
+        loop = asyncio.ProactorEventLoop()
+        asyncio.set_event_loop(loop)
 
-if not os.path.exists(args.c):
-    sys.stderr.write('config file {} not exist!\n'.format(args.c))
-    sys.exit()
-else:
-    with open(args.c, 'r') as ymlfile:
-        cfg = yaml.load(ymlfile)
-    servers = cfg['servers']
-    log_level = cfg['log_level'] if 'log_level' in cfg else 20
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-c', required=True, help="config file")
+    args = parser.parse_args()
 
-# server cert
-cert_path = os.path.join(os.path.dirname(os.path.abspath(args.c)), 'cert.pem')
+    if not os.path.exists(args.c):
+        sys.stderr.write('config file {} not exist!\n'.format(args.c))
+        sys.exit()
+    else:
+        with open(args.c, 'r') as ymlfile:
+            cfg = yaml.load(ymlfile)
+        servers = cfg['servers']
+        log_level = cfg['log_level'] if 'log_level' in cfg else 20
 
-if not os.path.exists(cert_path):
-    sys.stderr.write('server cert not found, creating...\n')
-    ECC(key_len=32).save(cert_path)
+    # server cert
+    cert_path = os.path.join(os.path.dirname(os.path.abspath(args.c)), 'cert.pem')
 
-kmgr = KeyManager(cert_path)
+    if not os.path.exists(cert_path):
+        sys.stderr.write('server cert not found, creating...\n')
+        ECC(key_len=32).save(cert_path)
 
-# add user
-for user, pass_ in cfg['users'].items():
-    kmgr.add_user(user, pass_)
+    kmgr = KeyManager(cert_path)
 
-loop = asyncio.get_event_loop()
-loop.set_default_executor(ThreadPoolExecutor(20))
+    # add user
+    for user, pass_ in cfg['users'].items():
+        kmgr.add_user(user, pass_)
 
-for server in servers:
-    handler = HandlerFactory(HXsocksHandler, server, kmgr, log_level)
     loop = asyncio.get_event_loop()
-    coro = asyncio.start_server(handler.handle, handler.address[0], handler.address[1], loop=loop)
-    server = loop.run_until_complete(coro)
+    loop.set_default_executor(ThreadPoolExecutor(20))
 
-loop.run_forever()
+    for server in servers:
+        handler = HandlerFactory(HXsocksHandler, server, kmgr, log_level)
+        loop = asyncio.get_event_loop()
+        coro = asyncio.start_server(handler.handle, handler.address[0], handler.address[1], loop=loop)
+        server = loop.run_until_complete(coro)
+
+    loop.run_forever()
+
+
+if __name__ == '__main__':
+    main()

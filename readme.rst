@@ -48,7 +48,7 @@ run
 
 ::
 
-    python -m hxsocks -c config.yaml
+    hxsocks -c config.yaml
 
 client
 ------

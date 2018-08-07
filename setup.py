@@ -11,8 +11,11 @@ setup(
     author_email='null',
     url='https://github.com/v3aqb/hxsocks',
     packages=find_packages(),
-    package_data={
-        'hxsocks': ['README.rst', 'LICENSE']
+    include_package_data=True,
+    entry_points={
+        'console_scripts': [
+            'hxsocks = hxsocks.__main__:main'
+        ]
     },
     dependency_links=['https://github.com/v3aqb/hxcrypto/archive/master.zip#egg=hxcrypto-0.0.2'],
     install_requires=["hxcrypto", "pyyaml"],
