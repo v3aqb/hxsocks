@@ -234,7 +234,7 @@ class hxs2_connection():
             data = header + payload
             ct = self.__cipher.encrypt(data)
             self._client_writer.write(struct.pack('>H', len(ct)) + ct)
-            self._client_writer.drain()
+            await self._client_writer.drain()
         except OSError as e:
             # destroy connection
             self._logger.error('send_frame error %r' % e)
