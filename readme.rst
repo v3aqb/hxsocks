@@ -26,9 +26,13 @@ install
 update
 ------
 
+using `pip -U` may cause problems, better uninstall and install.
+
 ::
 
-    pip install https://github.com/v3aqb/hxsocks/archive/master.zip -U --process-dependency-links
+    pip uninstall hxsocks
+    pip uninstall hxcrypto
+    pip install https://github.com/v3aqb/hxsocks/archive/master.zip --process-dependency-links
 
 configure file example
 ----------------------
