@@ -47,14 +47,15 @@ async def open_connection(addr, port, proxy):
     # create connection
     if proxy:
         fut = asyncio.open_connection(proxy[0], proxy[1])
-        remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=5)
+        remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=2)
         s = 'CONNECT {0}:{1} HTTP/1.1\r\nHost: {0}:{1}\r\n\r\n'.format(addr, port)
         remote_writer.write(s.encode())
-        data = await remote_reader.readuntil(b'\r\n\r\n')
+        fut = remote_reader.readuntil(b'\r\n\r\n')
+        data = await asyncio.wait_for(fut, timeout=2)
         if b'200' not in data:
             raise IOError(0, 'create tunnel via %s failed!' % proxy)
         return remote_reader, remote_writer
 
     fut = asyncio.open_connection(addr, port)
-    remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=5)
+    remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=4)
     return remote_reader, remote_writer
