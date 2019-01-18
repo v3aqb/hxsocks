@@ -23,6 +23,7 @@ import struct
 import io
 import time
 import random
+import traceback
 
 from hxcrypto import InvalidTag, AEncryptor
 from .util import open_connection
@@ -64,126 +65,130 @@ class hxs2_connection():
         timeout_count = 0
 
         while True:
-            if self._gone and len(self._stream_writer) == 0:
-                break
-
-            time_ = time.time()
-            if time_ - self._last_active > 300:
-                break
-
-            # read frame_len
             try:
-                fut = self._client_reader.readexactly(2)
-                frame_len = await asyncio.wait_for(fut, timeout=10)
-                frame_len, = struct.unpack('>H', frame_len)
-                timeout_count = 0
-            except (asyncio.IncompleteReadError, ValueError, InvalidTag) as e:
-                self._logger.debug('read frame_len error: %r' % e)
-                break
-            except asyncio.TimeoutError:
-                timeout_count += 1
-                # client should sent keep_alive chunk
-                if timeout_count > 10:
-                    # destroy connection
-                    self._logger.debug('read frame_len timed out.')
+                if self._gone and len(self._stream_writer) == 0:
                     break
-                continue
-            except OSError as e:
-                self._logger.debug('read frame_len error: %r' % e)
-                break
 
-            # read chunk_data
-            try:
-                fut = self._client_reader.readexactly(frame_len)
-                # chunk size shoule be lower than 16kB
-                frame_data = await asyncio.wait_for(fut, timeout=5)
-                frame_data = self.__cipher.decrypt(frame_data)
-            except (OSError, InvalidTag, asyncio.TimeoutError) as e:
-                # something went wrong...
-                self._logger.debug('read frame error: %r' % e)
-                break
-
-            # parse chunk_data
-            # +------+-------------------+----------+
-            # | type | flags | stream_id | payload  |
-            # +------+-------------------+----------+
-            # |  1   |   1   |     2     | Variable |
-            # +------+-------------------+----------+
-
-            header, payload = frame_data[:4], frame_data[4:]
-            frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
-            payload = io.BytesIO(payload)
-
-            if frame_type != 6:
-                self._last_active = time.time()
-
-            self._logger.debug('recv frame_type: %d, stream_id: %d' % (frame_type, stream_id))
-            if frame_type == 0:
-                # DATA
-                # first 2 bytes of payload indicates data_len
-                data_len, = struct.unpack('>H', payload.read(2))
-                data = payload.read(data_len)
-                if len(data) != data_len:
-                    # something went wrong, destory connection
-                    self._logger.debug('data_len mismatch')
+                time_ = time.time()
+                if time_ - self._last_active > 300:
                     break
-                # check if remote socket writable
-                if self._remote_status[stream_id] & EOF_SENT:
-                    continue
-                # sent data to stream
+
+                # read frame_len
                 try:
-                    self._stream_writer[stream_id].write(data)
-                    await self._stream_writer[stream_id].drain()
-                except OSError:
-                    # remote closed, reset stream
+                    fut = self._client_reader.readexactly(2)
+                    frame_len = await asyncio.wait_for(fut, timeout=10)
+                    frame_len, = struct.unpack('>H', frame_len)
+                    timeout_count = 0
+                except (asyncio.IncompleteReadError, ValueError, InvalidTag) as e:
+                    self._logger.debug('read frame_len error: %r' % e)
+                    break
+                except asyncio.TimeoutError:
+                    timeout_count += 1
+                    # client should sent keep_alive chunk
+                    if timeout_count > 10:
+                        # destroy connection
+                        self._logger.debug('read frame_len timed out.')
+                        break
+                    continue
+                except OSError as e:
+                    self._logger.debug('read frame_len error: %r' % e)
+                    break
+
+                # read chunk_data
+                try:
+                    fut = self._client_reader.readexactly(frame_len)
+                    # chunk size shoule be lower than 16kB
+                    frame_data = await asyncio.wait_for(fut, timeout=5)
+                    frame_data = self.__cipher.decrypt(frame_data)
+                except (OSError, InvalidTag, asyncio.TimeoutError) as e:
+                    # something went wrong...
+                    self._logger.debug('read frame error: %r' % e)
+                    break
+
+                # parse chunk_data
+                # +------+-------------------+----------+
+                # | type | flags | stream_id | payload  |
+                # +------+-------------------+----------+
+                # |  1   |   1   |     2     | Variable |
+                # +------+-------------------+----------+
+
+                header, payload = frame_data[:4], frame_data[4:]
+                frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
+                payload = io.BytesIO(payload)
+
+                if frame_type != 6:
+                    self._last_active = time.time()
+
+                self._logger.debug('recv frame_type: %d, stream_id: %d' % (frame_type, stream_id))
+                if frame_type == 0:
+                    # DATA
+                    # first 2 bytes of payload indicates data_len
+                    data_len, = struct.unpack('>H', payload.read(2))
+                    data = payload.read(data_len)
+                    if len(data) != data_len:
+                        # something went wrong, destory connection
+                        self._logger.debug('data_len mismatch')
+                        break
+                    # check if remote socket writable
+                    if self._remote_status[stream_id] & EOF_SENT:
+                        continue
+                    # sent data to stream
+                    try:
+                        self._stream_writer[stream_id].write(data)
+                        await self._stream_writer[stream_id].drain()
+                    except OSError:
+                        # remote closed, reset stream
+                        pass
+                elif frame_type == 1:
+                    # HEADER
+                    if self._next_stream_id == stream_id:
+                        # open new stream
+                        self._next_stream_id += 1
+
+                        host_len = payload.read(1)[0]
+                        host = payload.read(host_len).decode('ascii')
+                        port, = struct.unpack('>H', payload.read(2))
+                        # rest of the payload is discarded
+                        asyncio.ensure_future(self.create_connection(stream_id, host, port, self._proxy))
+
+                    elif stream_id < self._next_stream_id:
+                        if frame_flags & END_STREAM_FLAG:
+                            if self._stream_status[stream_id] == OPEN:
+                                self._stream_status[stream_id] = EOF_RECV
+                                self._stream_writer[stream_id].write_eof()
+                                self._remote_status[stream_id] = EOF_SENT
+                            elif self._stream_status[stream_id] == EOF_SENT:
+                                self._stream_status[stream_id] = CLOSED
+                                self._stream_writer[stream_id].close()
+                                self._remote_status[stream_id] = CLOSED
+                                del self._stream_writer[stream_id]
+                            else:
+                                self._logger.error('recv END_STREAM_FLAG, stream already closed.')
+                elif frame_type == 3:
+                    # RST_STREAM
+                    self._stream_status[stream_id] = CLOSED
+                    if stream_id in self._stream_writer:
+                        self._stream_writer[stream_id].close()
+                        del self._stream_writer[stream_id]
+                    self._remote_status[stream_id] = CLOSED
+                elif frame_type == 6:
+                    # PING
+                    if frame_flags == 0:
+                        await self.send_frame(6, 1, 0, b'\x00' * random.randint(64, 256))
+                elif frame_type == 7:
+                    # GOAWAY
+                    # no more new stream
+                    # make no sense when client sending this...
+                    self._gone = True
+                elif frame_type == 8:
+                    # WINDOW_UPDATE
                     pass
-            elif frame_type == 1:
-                # HEADER
-                if self._next_stream_id == stream_id:
-                    # open new stream
-                    self._next_stream_id += 1
-
-                    host_len = payload.read(1)[0]
-                    host = payload.read(host_len).decode('ascii')
-                    port, = struct.unpack('>H', payload.read(2))
-                    # rest of the payload is discarded
-                    asyncio.ensure_future(self.create_connection(stream_id, host, port, self._proxy))
-
-                elif stream_id < self._next_stream_id:
-                    if frame_flags & END_STREAM_FLAG:
-                        if self._stream_status[stream_id] == OPEN:
-                            self._stream_status[stream_id] = EOF_RECV
-                            self._stream_writer[stream_id].write_eof()
-                            self._remote_status[stream_id] = EOF_SENT
-                        elif self._stream_status[stream_id] == EOF_SENT:
-                            self._stream_status[stream_id] = CLOSED
-                            self._stream_writer[stream_id].close()
-                            self._remote_status[stream_id] = CLOSED
-                            del self._stream_writer[stream_id]
-                        else:
-                            self._logger.error('recv END_STREAM_FLAG, stream already closed.')
-            elif frame_type == 3:
-                # RST_STREAM
-                self._stream_status[stream_id] = CLOSED
-                if stream_id in self._stream_writer:
-                    self._stream_writer[stream_id].close()
-                    del self._stream_writer[stream_id]
-                self._remote_status[stream_id] = CLOSED
-            elif frame_type == 6:
-                # PING
-                if frame_flags == 0:
-                    await self.send_frame(6, 1, 0, b'\x00' * random.randint(64, 256))
-            elif frame_type == 7:
-                # GOAWAY
-                # no more new stream
-                # make no sense when client sending this...
-                self._gone = True
-            elif frame_type == 8:
-                # WINDOW_UPDATE
-                pass
-            else:
-                self._logger.debug('else')
-                break
+                else:
+                    self._logger.debug('else')
+                    break
+            except Exception as e:
+                self._logger.error('read from connection error: %r' % e)
+                self._logger.error(traceback.format_exc())
         # exit loop, close all streams...
         self._logger.info('recv from hxs2 connect ended')
         for stream_id, writer in self._stream_writer.items():
