@@ -45,6 +45,7 @@ class hxs2_connection():
         self.__cipher = AEncryptor(key, method, CTX)
         self._client_reader = reader
         self._client_writer = writer
+        self._client_writer.transport.set_write_buffer_limits(0, 0)
         self._proxy = proxy
         self._logger = logger
 
