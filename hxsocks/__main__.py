@@ -43,7 +43,7 @@ def main():
         sys.exit()
     else:
         with open(args.c, 'r') as ymlfile:
-            cfg = yaml.load(ymlfile)
+            cfg = yaml.safe_load(ymlfile)
         servers = cfg['servers']
         log_level = cfg['log_level'] if 'log_level' in cfg else 20
 
