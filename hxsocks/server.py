@@ -263,7 +263,7 @@ class HXsocksHandler:
                 if result:
                     await self.play_dead()
                 return
-            elif cmd in (10, 20):  # hxsocks / hxsocks2 client key exchange
+            elif cmd == 20:  # hxsocks2 client key exchange
                 req_count += 1
                 rint = random.randint(64, 2048)
                 req_len = await self.read(2)
@@ -281,9 +281,9 @@ class HXsocksHandler:
                         data = struct.pack('>H', len(data)) + data
                         ct = self.encryptor.encrypt(data)
                         client_writer.write(struct.pack('>H', len(ct)) + ct)
-                        return
-                    data = struct.pack('>H', len(data)) + data
-                    client_writer.write(self.encryptor.encrypt(data))
+                    else:
+                        data = struct.pack('>H', len(data)) + data
+                        client_writer.write(self.encryptor.encrypt(data))
 
                 def auth():
                     for _ts in [ts, ts - 1, ts + 1]:
@@ -305,99 +305,20 @@ class HXsocksHandler:
                     signature = KM.SERVER_CERT.sign(h, DEFAULT_HASH)
                     data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + h + scert + signature + os.urandom(rint)
                     _send(data)
-                    if cmd == 20:
-                        client_pkey = hashlib.md5(client_pkey).digest()
-                        conn = hxs2_connection(client_reader,
-                                               client_writer,
-                                               KM.get_skey_by_pubkey(client_pkey),
-                                               self.server.method,
-                                               self.server.proxy,
-                                               self.logger)
-                        await conn.wait_close()
-                        return
-                    continue
+
+                    client_pkey = hashlib.md5(client_pkey).digest()
+                    conn = hxs2_connection(client_reader,
+                                           client_writer,
+                                           KM.get_skey_by_pubkey(client_pkey),
+                                           self.server.method,
+                                           self.server.proxy,
+                                           self.logger)
+                    await conn.wait_close()
+                    return
                 else:
                     self.logger.error('Private_key already registered. client: {} {}'.format(client, self.client_address))
                     await self.play_dead()
                     return
-            elif cmd == 11:  # a connect request
-                req_count += 1
-                client_pkey = await self.read(16)
-                rint = random.randint(64, 2048)
-
-                def _send(code, cipher):
-                    if code == 1:
-                        client_writer.write(struct.pack('>H', rint) + os.urandom(rint))
-                    else:
-                        ct = cipher.encrypt(bytes((code, )) + os.urandom(rint))
-                        client_writer.write(struct.pack('>H', len(ct)) + ct)
-
-                if KM.check_key(client_pkey):
-                    self.logger.error('client key not exist or expired. {}'.format(self.client_address))
-                    ctlen = await self.read(2)
-                    ctlen, = struct.unpack('>H', ctlen)
-                    await self.read(ctlen)
-                    _send(1, None)
-                    continue
-
-                user = KM.get_user_by_pubkey(client_pkey)
-                cipher = AEncryptor(KM.get_skey_by_pubkey(client_pkey), self.server.method, CTX)
-
-                ctlen = await self.read(2)
-                ctlen, = struct.unpack('>H', ctlen)
-
-                ct = await self.read(ctlen)
-                try:
-                    data = cipher.decrypt(ct)
-                except InvalidTag:
-                    self.logger.error('hxs connect req InvalidTag. {} {}'.format(user, self.client_address))
-                    # await self.play_dead()
-                    return
-                buf = io.BytesIO(data)
-                ts = buf.read(4)
-                if abs(struct.unpack('>I', ts)[0] - time.time()) > 600:
-                    self.logger.error('bad timestamp, possible replay attrack. {} {}'.format(user, self.client_address))
-                    # KM.del_key(client_pkey)
-                    # _send(1, None)
-                    await self.play_dead()
-                    return
-
-                host_len = buf.read(1)[0]
-                addr = buf.read(host_len).decode('ascii')
-                port, = struct.unpack('>H', buf.read(2))
-
-                self.logger.info('connecting to {}:{} via {}, {} {} {}'.format(addr, port, self.server.proxy, user, req_count, self.client_address))
-
-                try:
-                    remote_reader, remote_writer = await open_connection(addr, port, self.server.proxy)
-                    _send(0, cipher)
-                except Exception:
-                    self.logger.error('connect to {}:{} failed!'.format(addr, port))
-                    _send(2, cipher)
-                    continue
-
-                context = ForwardContext()
-                tasks = [self.hxs_forward_from_remote(remote_reader, client_writer, cipher, context),
-                         self.hxs_forward_from_client(client_reader, client_writer, remote_writer, cipher, context),
-                         ]
-                await asyncio.wait(tasks)
-                remote_writer.close()
-                if context.readable or context.writeable:
-                    return
-                continue
-            elif cmd == 12:  # get public key
-                req_len = await self.read(2)
-                req_len, = struct.unpack('>H', req_len)
-                data = await self.read(req_len)
-                # drop data
-                # return public key with padding
-                rint = random.randint(64, 2048)
-                scert = KM.SERVER_CERT.get_pub_key()
-                data = struct.pack('>H', len(scert)) + scert + os.urandom(rint)
-                data = struct.pack('>H', len(data)) + data
-                # the first response, just encrypt and sent
-                client_writer.write(self.encryptor.encrypt(data))
-                continue
             else:
                 # TODO: security
                 self.logger.error('bad cmd: %s, %s' % (cmd, self.client_address))
@@ -408,105 +329,9 @@ class HXsocksHandler:
         for _ in range(10):
             fut = self.client_reader.read(self.bufsize)
             try:
-                await asyncio.wait_for(fut, timeout=1)
+                await asyncio.wait_for(fut, timeout)
             except (asyncio.TimeoutError, ConnectionResetError):
                 return
-
-    async def hxs_forward_from_remote(self, remote_reader, client_writer, cipher, context, timeout=120):
-        # read from remote_reader, write to client_writer
-        total_send = 0
-        while not context.remote_eof:
-            try:
-                fut = remote_reader.read(self.bufsize)
-                data = await asyncio.wait_for(fut, timeout=5)
-                context.last_active = time.time()
-            except asyncio.TimeoutError:
-                if time.time() - context.last_active > timeout or context.local_eof:
-                    data = b''
-                else:
-                    continue
-            except (ConnectionResetError, OSError):
-                data = b''
-
-            if not data:
-                # timeout or remote closed...
-                context.remote_eof = True
-                if total_send < 8196 and random.random() < 0.5:
-                    # sent fake chunk before close
-                    _data = bytes((2, )) + b'\x00' * random.randint(1024, 8196)
-                    ct = cipher.encrypt(_data)
-                    _data = struct.pack('>H', len(ct)) + ct
-                    client_writer.write(_data)
-            # send data / close link
-            total_send += len(data)
-            padding_len = random.randint(8, 255)
-            data = bytes((padding_len, )) + data + b'\x00' * padding_len
-            ct = cipher.encrypt(data)
-            data = struct.pack('>H', len(ct)) + ct
-
-            try:
-                client_writer.write(data)
-                await client_writer.drain()
-            except ConnectionResetError:
-                context.local_eof = True
-                return
-        context.writeable = False
-
-    async def hxs_forward_from_client(self, client_reader, client_writer, remote_writer, cipher, context, timeout=200):
-        # data from hxs client
-        remote_writable = True
-        while not context.local_eof:
-            try:
-                fut = client_reader.readexactly(2)
-                ct_len = await asyncio.wait_for(fut, timeout=10)
-                # client is supposed to close hxs link
-                ct_len, = struct.unpack('>H', ct_len)
-            except asyncio.TimeoutError:
-                if time.time() - context.last_active > timeout or context.remote_eof:
-                    # timeout, sent remote eof...
-                    remote_writer.write_eof()
-                    remote_writable = False
-                    break
-                else:
-                    continue
-            except (ConnectionResetError, OSError, asyncio.IncompleteReadError):
-                context.local_eof = True
-                break
-
-            try:
-                fut = client_reader.readexactly(ct_len)
-                ct = await asyncio.wait_for(fut, timeout=5)
-                data = cipher.decrypt(ct)
-                pad_len = data[0]
-
-                if 0 < pad_len < 8:
-                    # fake chunk, drop
-                    if pad_len == 1 and context.writeable:
-                        _data = bytes((2, )) + b'\x00' * random.randint(1024, 8196)
-                        ct = cipher.encrypt(_data)
-                        _data = struct.pack('>H', len(ct)) + ct
-                        client_writer.write(_data)
-                    continue
-            except (asyncio.TimeoutError, BufEmptyError, asyncio.IncompleteReadError, ValueError, ConnectionResetError):
-                context.local_eof = True
-                remote_writer.write_eof()
-                return
-
-            data = data[1:0 - pad_len] if pad_len else data[1:]
-            if data and remote_writable:
-                context.last_active = time.time()
-                remote_writer.write(data)
-                await remote_writer.drain()
-                # ConnectionResetError
-            else:
-                # client closed, gracefully
-                context.readable = False
-                try:
-                    remote_writer.write_eof()
-                except ConnectionResetError:
-                    pass
-                break
-        context.local_eof = True
 
     async def handle_ss(self, client_reader, client_writer, addr_type):
         # if error, return 1
