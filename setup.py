@@ -4,7 +4,7 @@ long_description = 'A better encrypted socks proxy'
 
 setup(
     name="hxsocks",
-    version="0.0.2",
+    version="0.0.3",
     license='GNU General Public License v3 (GPLv3)',
     description="A fast tunnel proxy that help you get through firewalls",
     author='v3aqb',
