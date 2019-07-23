@@ -203,6 +203,7 @@ class hxs2_connection():
         t = time.time()
         try:
             reader, writer = await open_connection(host, port, self._proxy)
+            writer.transport.set_write_buffer_limits(0, 0)
         except Exception as e:
             # tell client request failed.
             self._logger.info('connect %s:%s failed: %r' % (host, port, e))
