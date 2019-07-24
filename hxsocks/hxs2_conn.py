@@ -80,7 +80,7 @@ class hxs2_connection():
                     frame_len = await asyncio.wait_for(fut, timeout=10)
                     frame_len, = struct.unpack('>H', frame_len)
                     timeout_count = 0
-                except (asyncio.IncompleteReadError, ValueError, InvalidTag) as e:
+                except (asyncio.IncompleteReadError, ValueError, InvalidTag, ConnectionResetError) as e:
                     self._logger.debug('read frame_len error: %r' % e)
                     break
                 except asyncio.TimeoutError:
