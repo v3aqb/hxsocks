@@ -139,7 +139,11 @@ class hxs2_connection():
                         await self._stream_writer[stream_id].drain()
                     except OSError:
                         # remote closed, reset stream
-                        pass
+                        self._stream_status[stream_id] = CLOSED
+                        if stream_id in self._stream_writer:
+                            self._stream_writer[stream_id].close()
+                            del self._stream_writer[stream_id]
+                        self._remote_status[stream_id] = CLOSED
                 elif frame_type == 1:
                     # HEADER
                     if self._next_stream_id == stream_id:
