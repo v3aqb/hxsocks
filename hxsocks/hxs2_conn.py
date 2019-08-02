@@ -56,6 +56,7 @@ class hxs2_connection():
 
         self._stream_writer = {}
         self._stream_status = {}
+        self._stream_last_active = {}
         self._remote_status = {}
         self._stream_task = {}
 
@@ -100,7 +101,7 @@ class hxs2_connection():
                 try:
                     fut = self._client_reader.readexactly(frame_len)
                     # chunk size shoule be lower than 16kB
-                    frame_data = await asyncio.wait_for(fut, timeout=5)
+                    frame_data = await asyncio.wait_for(fut, timeout=8)
                     frame_data = self.__cipher.decrypt(frame_data)
                 except (OSError, InvalidTag, asyncio.TimeoutError,
                         asyncio.streams.IncompleteReadError) as err:
@@ -138,6 +139,7 @@ class hxs2_connection():
                     # sent data to stream
                     try:
                         self._stream_writer[stream_id].write(data)
+                        self._stream_last_active[stream_id] = time.time()
                         await self._stream_writer[stream_id].drain()
                     except OSError:
                         # remote closed, reset stream
@@ -230,6 +232,7 @@ class hxs2_connection():
             self._stream_writer[stream_id] = writer
             self._stream_status[stream_id] = OPEN
             self._remote_status[stream_id] = OPEN
+            self._stream_last_active[stream_id] = time.time()
             # start forward from remote_reader to client_writer
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
@@ -260,10 +263,12 @@ class hxs2_connection():
             fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
-                timeout_count = 0
+                self._stream_last_active[stream_id] = time.time()
             except asyncio.TimeoutError:
                 timeout_count += 1
-                if timeout_count <= 10:
+                if self._stream_status[stream_id] != OPEN:
+                    data = b''
+                elif time.time() - self._stream_last_active[stream_id] < 120:
                     continue
                 self._remote_status[stream_id] = CLOSED
                 # TODO: reset stream
