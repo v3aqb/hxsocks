@@ -67,7 +67,7 @@ class hxs2_connection():
 
         while True:
             try:
-                if self._gone and len(self._stream_writer) == 0:
+                if self._gone and not self._stream_writer:
                     break
 
                 time_ = time.time()
@@ -80,8 +80,9 @@ class hxs2_connection():
                     frame_len = await asyncio.wait_for(fut, timeout=10)
                     frame_len, = struct.unpack('>H', frame_len)
                     timeout_count = 0
-                except (asyncio.IncompleteReadError, ValueError, InvalidTag, ConnectionResetError) as e:
-                    self._logger.debug('read frame_len error: %r' % e)
+                except (asyncio.IncompleteReadError, ValueError, InvalidTag,
+                        ConnectionResetError) as err:
+                    self._logger.debug('read frame_len error: %r', err)
                     break
                 except asyncio.TimeoutError:
                     timeout_count += 1
@@ -91,8 +92,8 @@ class hxs2_connection():
                         self._logger.debug('read frame_len timed out.')
                         break
                     continue
-                except OSError as e:
-                    self._logger.debug('read frame_len error: %r' % e)
+                except OSError as err:
+                    self._logger.debug('read frame_len error: %r', err)
                     break
 
                 # read chunk_data
@@ -101,9 +102,10 @@ class hxs2_connection():
                     # chunk size shoule be lower than 16kB
                     frame_data = await asyncio.wait_for(fut, timeout=5)
                     frame_data = self.__cipher.decrypt(frame_data)
-                except (OSError, InvalidTag, asyncio.TimeoutError) as e:
+                except (OSError, InvalidTag, asyncio.TimeoutError,
+                        asyncio.streams.IncompleteReadError) as err:
                     # something went wrong...
-                    self._logger.debug('read frame error: %r' % e)
+                    self._logger.debug('read frame error: %r', err)
                     break
 
                 # parse chunk_data
@@ -120,7 +122,7 @@ class hxs2_connection():
                 if frame_type != 6:
                     self._last_active = time.time()
 
-                self._logger.debug('recv frame_type: %d, stream_id: %d' % (frame_type, stream_id))
+                self._logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
                 if frame_type == 0:
                     # DATA
                     # first 2 bytes of payload indicates data_len
@@ -191,8 +193,8 @@ class hxs2_connection():
                 else:
                     self._logger.debug('else')
                     break
-            except Exception as e:
-                self._logger.error('read from connection error: %r' % e)
+            except Exception as err:
+                self._logger.error('read from connection error: %r', err)
                 self._logger.error(traceback.format_exc())
         # exit loop, close all streams...
         self._logger.info('recv from hxs2 connect ended')
@@ -203,20 +205,20 @@ class hxs2_connection():
                 pass
 
     async def create_connection(self, stream_id, host, port, proxy):
-        self._logger.info('connecting %s:%s via %s' % (host, port, proxy))
-        t = time.time()
+        self._logger.info('connecting %s:%s via %s', host, port, proxy)
+        timelog = time.time()
         try:
             reader, writer = await open_connection(host, port, self._proxy)
             writer.transport.set_write_buffer_limits(0, 0)
-        except Exception as e:
+        except Exception as err:
             # tell client request failed.
-            self._logger.info('connect %s:%s failed: %r' % (host, port, e))
+            self._logger.info('connect %s:%s failed: %r', host, port, err)
             data = b'\x01' * random.randint(64, 256)
             await self.send_frame(3, 0, stream_id, data)
         else:
             # tell client request success, header frame, first byte is \x00
-            t = time.time() - t
-            self._logger.info('connect %s:%s connected, %.3fs' % (host, port, t))
+            timelog = time.time() - timelog
+            self._logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
             if stream_id in self._stream_status and self._stream_status[stream_id] == CLOSED:
@@ -229,11 +231,11 @@ class hxs2_connection():
             self._stream_status[stream_id] = OPEN
             self._remote_status[stream_id] = OPEN
             # start forward from remote_reader to client_writer
-            task = asyncio.ensure_future(self.read_from_stream(stream_id, reader))
+            task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
     async def send_frame(self, type_, flags, stream_id, payload):
-        self._logger.debug('send frame_type: %d, stream_id: %d' % (type_, stream_id))
+        self._logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
         if type_ != 6:
             self._last_active = time.time()
 
@@ -244,18 +246,18 @@ class hxs2_connection():
             ct = self.__cipher.encrypt(data)
             self._client_writer.write(struct.pack('>H', len(ct)) + ct)
             await self._client_writer.drain()
-        except OSError as e:
+        except OSError as err:
             # destroy connection
-            self._logger.error('send_frame error %r' % e)
-            raise e
+            self._logger.error('send_frame error %r', err)
+            raise err
         finally:
             self._client_writer_lock.release()
 
-    async def read_from_stream(self, stream_id, reader):
+    async def read_from_remote(self, stream_id, remote_reader):
         self._logger.debug('start read from stream')
         timeout_count = 0
         while not self._remote_status[stream_id] & EOF_RECV:
-            fut = reader.read(self.bufsize)
+            fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
                 timeout_count = 0
