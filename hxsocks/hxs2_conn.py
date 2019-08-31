@@ -41,10 +41,12 @@ END_STREAM_FLAG = 1
 class hxs2_connection():
     bufsize = 8192
 
-    def __init__(self, reader, writer, key, method, proxy, logger):
-        self.__cipher = AEncryptor(key, method, CTX)
+    def __init__(self, reader, writer, user, skey, method, proxy, logger):
+        self.__cipher = AEncryptor(skey, method, CTX)
+        self._user = user
         self._client_reader = reader
         self._client_writer = writer
+        self._client_address = writer.get_extra_info('peername')[0]
         self._client_writer.transport.set_write_buffer_limits(0, 0)
         self._proxy = proxy
         self._logger = logger
@@ -158,7 +160,7 @@ class hxs2_connection():
                         host = payload.read(host_len).decode('ascii')
                         port, = struct.unpack('>H', payload.read(2))
                         # rest of the payload is discarded
-                        asyncio.ensure_future(self.create_connection(stream_id, host, port, self._proxy))
+                        asyncio.ensure_future(self.create_connection(stream_id, host, port))
 
                     elif stream_id < self._next_stream_id:
                         if frame_flags & END_STREAM_FLAG:
@@ -206,21 +208,22 @@ class hxs2_connection():
             except Exception:
                 pass
 
-    async def create_connection(self, stream_id, host, port, proxy):
-        self._logger.info('connecting %s:%s via %s', host, port, proxy)
+    async def create_connection(self, stream_id, host, port):
+        self._logger.info('connecting %s:%s %s %s', host, port, self._user, self._client_address)
         timelog = time.time()
         try:
             reader, writer = await open_connection(host, port, self._proxy)
             writer.transport.set_write_buffer_limits(0, 0)
         except Exception as err:
             # tell client request failed.
-            self._logger.info('connect %s:%s failed: %r', host, port, err)
+            self._logger.error('connect %s:%s failed: %r', host, port, err)
             data = b'\x01' * random.randint(64, 256)
             await self.send_frame(3, 0, stream_id, data)
         else:
             # tell client request success, header frame, first byte is \x00
             timelog = time.time() - timelog
-            self._logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
+            if timelog > 1:
+                self._logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
             if stream_id in self._stream_status and self._stream_status[stream_id] == CLOSED:

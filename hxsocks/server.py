@@ -35,7 +35,7 @@ from collections import defaultdict, deque
 import asyncio
 import asyncio.streams
 
-from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, AEncryptor, ECC, compare_digest
+from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, ECC, compare_digest
 from .hxs2_conn import hxs2_connection
 from .util import open_connection
 
@@ -50,8 +50,7 @@ def parse_hostport(host, default_port=80):
     m = re.match(r'(.+):(\d+)$', host)
     if m:
         return m.group(1).strip('[]'), int(m.group(2))
-    else:
-        return host.strip('[]'), default_port
+    return host.strip('[]'), default_port
 
 
 class KeyManager(object):
@@ -118,12 +117,12 @@ class HandlerFactory:
         p = urllib.parse.urlparse(serverinfo)
         q = urllib.parse.parse_qs(p.query)
         if p.scheme == 'ss':
-            self.PSK, self.method = p.password, p.username
+            self.psk, self.method = p.password, p.username
             self.ss_enable = True
         elif p.scheme == 'hxs':
-            self.PSK = q.get('PSK', [''])[0]
+            self.psk = q.get('PSK', [''])[0]
             self.method = q.get('method', [DEFAULT_METHOD])[0]
-            self.ss_enable = self.PSK and urllib.parse.parse_qs(p.query).get('ss', ['1'])[0] == '1'
+            self.ss_enable = self.psk and urllib.parse.parse_qs(p.query).get('ss', ['1'])[0] == '1'
         else:
             raise ValueError('bad serverinfo: {}'.format(self.serverinfo))
 
@@ -143,7 +142,7 @@ class HandlerFactory:
         hdr.setFormatter(formatter)
         self.logger.addHandler(hdr)
 
-        self.logger.warning('starting server: {}'.format(serverinfo))
+        self.logger.warning('starting server: %s', serverinfo)
 
     async def handle(self, reader, writer):
         _handler = self._class(self)
@@ -156,8 +155,11 @@ class HXsocksHandler:
     def __init__(self, server):
         self.server = server
         self.logger = server.logger
-        self.encryptor = Encryptor(self.server.PSK, self.server.method)
+        self.encryptor = Encryptor(self.server.psk, self.server.method)
         self._buf = b''
+
+        self.client_address = None
+        self.client_reader = None
 
     async def _read(self, size=None):
         if self.server.aead:
@@ -180,8 +182,7 @@ class HXsocksHandler:
             if self._buf:
                 buf, self._buf = self._buf, b''
                 return buf
-            else:
-                return await self._read()
+            return await self._read()
         else:
             while len(self._buf) < size:
                 self._buf += (await self._read(size - len(self._buf)))
@@ -197,22 +198,22 @@ class HXsocksHandler:
         client_writer.close()
 
     async def _handle(self, client_reader, client_writer):
-        self.client_address = client_writer.get_extra_info('peername')
+        self.client_address = client_writer.get_extra_info('peername')[0]
         self.client_reader = client_reader
-        self.logger.debug('incoming connection {}'.format(self.client_address))
+        self.logger.debug('incoming connection %s', self.client_address)
 
         kmgr = self.server.kmgr
 
         try:
             fut = self.client_reader.readexactly(self.encryptor._iv_len)
-            iv = await asyncio.wait_for(fut, timeout=10)
-            self.encryptor.decrypt(iv)
+            iv_ = await asyncio.wait_for(fut, timeout=10)
+            self.encryptor.decrypt(iv_)
         except IVError:
-            self.logger.error('iv reused, {}'.format(self.client_address))
+            self.logger.error('iv reused, %s', self.client_address)
             await self.play_dead()
             return
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
-            self.logger.warning('iv read failed, {}'.format(self.client_address))
+            self.logger.warning('iv read failed, %s', self.client_address)
             return
 
         req_count = 0
@@ -220,37 +221,37 @@ class HXsocksHandler:
         while True:
             if req_count:
                 # Not shadowsocks request
-                self.logger.debug('excepting next request: {}'.format(self.client_address))
+                self.logger.debug('excepting next request: %s', self.client_address)
                 fut = client_reader.readexactly(2)
                 try:
                     await asyncio.wait_for(fut, timeout=120)
-                except (OSError, ConnectionResetError, asyncio.IncompleteReadError, asyncio.TimeoutError) as e:
-                    self.logger.debug('closed: {} {}'.format(e, self.client_address))
+                except (OSError, ConnectionResetError, asyncio.IncompleteReadError, asyncio.TimeoutError) as err:
+                    self.logger.debug('closed: %s %s', err, self.client_address)
                     return
 
             try:
                 fut = self.read(1)
                 cmd = await asyncio.wait_for(fut, timeout=10)
             except asyncio.TimeoutError:
-                self.logger.debug('read cmd timed out. {}'.format(self.client_address))
+                self.logger.debug('read cmd timed out. %s', self.client_address)
                 return
             except (ConnectionResetError, asyncio.IncompleteReadError):
-                self.logger.debug('read cmd reset. {}'.format(self.client_address))
+                self.logger.debug('read cmd reset. %s', self.client_address)
                 return
             except InvalidTag:
-                self.logger.error('InvalidTag while read cmd. {}'.format(self.client_address))
+                self.logger.error('InvalidTag while read cmd. %s', self.client_address)
                 await self.play_dead()
                 return
             cmd = cmd[0]
-            self.logger.debug('cmd: {} {}'.format(cmd, self.client_address))
+            self.logger.debug('cmd: %s %s', cmd, self.client_address)
 
             if cmd in (1, 3, 4):
                 # A shadowsocks request
-                result = await self.handle_ss(client_reader, client_writer, addr_type=cmd)
+                result = await self.handle_ss(client_writer, addr_type=cmd)
                 if result:
                     await self.play_dead()
                 return
-            elif cmd == 20:  # hxsocks2 client key exchange
+            if cmd == 20:  # hxsocks2 client key exchange
                 req_count += 1
                 rint = random.randint(64, 2048)
                 req_len = await self.read(2)
@@ -281,7 +282,7 @@ class HXsocksHandler:
 
                 client = auth()
                 if not client:
-                    self.logger.error('user not found. {}'.format(self.client_address))
+                    self.logger.error('user not found. %s', self.client_address)
                     await self.play_dead()
                     return
                 try:
@@ -296,6 +297,7 @@ class HXsocksHandler:
                     client_pkey = hashlib.md5(client_pkey).digest()
                     conn = hxs2_connection(client_reader,
                                            client_writer,
+                                           client,
                                            kmgr.get_skey_by_pubkey(client_pkey),
                                            self.server.method,
                                            self.server.proxy,
@@ -309,7 +311,7 @@ class HXsocksHandler:
                     return
             else:
                 # TODO: security
-                self.logger.error('bad cmd: %s, %s' % (cmd, self.client_address))
+                self.logger.error('bad cmd: %s, %s', cmd, self.client_address)
                 await self.play_dead()
                 return
 
@@ -321,7 +323,7 @@ class HXsocksHandler:
             except (asyncio.TimeoutError, ConnectionResetError):
                 return
 
-    async def handle_ss(self, client_reader, client_writer, addr_type):
+    async def handle_ss(self, client_writer, addr_type):
         # if error, return 1
         # get header...
         try:
@@ -338,32 +340,32 @@ class HXsocksHandler:
                 addr = socket.inet_ntop(socket.AF_INET6, data)
             port = await self.read(2)
             port, = struct.unpack('>H', port)
-        except Exception as e:
-            self.logger.error('error on read ss header: {} {}'.format(e, self.client_address))
+        except Exception as err:
+            self.logger.error('error on read ss header: %s %s', err, self.client_address)
             self.logger.error(traceback.format_exc())
             return 1
 
-        self.logger.info('connect to {}:{} {!r} {!r}'.format(addr, port, self.client_address, self.server.proxy))
+        self.logger.info('connect to %s:%d %r %r', addr, port, self.client_address, self.server.proxy)
 
         try:
             remote_reader, remote_writer = await open_connection(addr, port, self.server.proxy)
-        except Exception as e:
-            self.logger.error('connect to {}:{} failed! {!r}'.format(addr, port, e))
+        except Exception as err:
+            self.logger.error('connect to %s:%s failed! %r', addr, port, err)
             return
 
         context = ForwardContext()
 
-        tasks = [self.ss_forward_A(client_reader, remote_writer, self.encryptor.decrypt, context),
-                 self.ss_forward_B(remote_reader, client_writer, self.encryptor.encrypt, context),
+        tasks = [self.ss_forward_a(remote_writer, context),
+                 self.ss_forward_b(remote_reader, client_writer, self.encryptor.encrypt, context),
                  ]
         try:
             await asyncio.wait(tasks)
-        except Exception as e:
-            self.logger.error(repr(e))
+        except Exception as err:
+            self.logger.error(repr(err))
             self.logger.error(traceback.format_exc())
         remote_writer.close()
 
-    async def ss_forward_A(self, read_from, write_to, cipher, context, timeout=60):
+    async def ss_forward_a(self, write_to, context, timeout=60):
         # data from ss client
         while True:
             try:
@@ -392,7 +394,7 @@ class HXsocksHandler:
         except (ConnectionResetError, OSError):
             pass
 
-    async def ss_forward_B(self, read_from, write_to, cipher, context, timeout=60):
+    async def ss_forward_b(self, read_from, write_to, cipher, context, timeout=60):
         # data from remote
         while True:
             try:
