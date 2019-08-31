@@ -55,57 +55,44 @@ def parse_hostport(host, default_port=80):
 
 
 class KeyManager(object):
-    def __init__(self, server_cert, limit=3, expire=6):
+    def __init__(self, server_cert, limit=10):
         '''server_cert: path to server_cert'''
         self.SERVER_CERT = ECC(from_file=server_cert)
         self._limit = limit
-        self._expire = 6 * 3600
-        self.USER_PASS = {}
+        self.user_pass = {}
         self.userpkeys = defaultdict(deque)  # user name: client key
         self.pkeyuser = {}  # user pubkey: user name
         self.pkeykey = {}   # user pubkey: shared secret
-        self.pkeytime = {}  # time of client pubkey creation
 
     def add_user(self, user, password):
-        self.USER_PASS[user] = password
+        self.user_pass[user] = password
 
     def remove_user(self, user):
-        del self.USER_PASS[user]
+        del self.user_pass[user]
 
     def iter_user(self):
-        return self.USER_PASS.items()
+        return self.user_pass.items()
 
     def key_xchange(self, user, user_pkey, key_len):
         # create_key
+        # return public_key, passwd_of_user
         if hashlib.md5(user_pkey).digest() in self.pkeyuser:
-            return 0, 0
+            raise ValueError('public key already registered. user: %s' % user)
         if len(self.userpkeys[user]) > self._limit:
-            self.del_key(self.userpkeys[user][0])
+            raise ValueError('connection limit exceeded. user: %s' % user)
         ecc = ECC(key_len)
         shared_secret = ecc.get_dh_key(user_pkey)
         user_pkey_md5 = hashlib.md5(user_pkey).digest()
         self.userpkeys[user].append(user_pkey_md5)
         self.pkeyuser[user_pkey_md5] = user
         self.pkeykey[user_pkey_md5] = shared_secret
-        self.pkeytime[user_pkey_md5] = time.time()
-        return ecc.get_pub_key(), self.USER_PASS[user]
-
-    def check_key(self, pubk):
-        if pubk not in self.pkeykey:
-            return 1
-        if time.time() - self.pkeytime[pubk] > self._expire:
-            self.del_key(pubk)
-            return 1
+        return ecc.get_pub_key(), self.user_pass[user]
 
     def del_key(self, pkey):
         user = self.pkeyuser[pkey]
         del self.pkeyuser[pkey]
-        del self.pkeytime[pkey]
         del self.pkeykey[pkey]
         self.userpkeys[user].remove(pkey)
-
-    def get_user_by_pubkey(self, pubkey):
-        return self.pkeyuser[pubkey]
 
     def get_skey_by_pubkey(self, pubkey):
         return self.pkeykey[pubkey]
@@ -214,7 +201,7 @@ class HXsocksHandler:
         self.client_reader = client_reader
         self.logger.debug('incoming connection {}'.format(self.client_address))
 
-        KM = self.server.kmgr
+        kmgr = self.server.kmgr
 
         try:
             fut = self.client_reader.readexactly(self.encryptor._iv_len)
@@ -287,7 +274,7 @@ class HXsocksHandler:
 
                 def auth():
                     for _ts in [ts, ts - 1, ts + 1]:
-                        for user, passwd in KM.iter_user():
+                        for user, passwd in kmgr.iter_user():
                             h = hmac.new(passwd.encode(), struct.pack('>I', _ts) + client_pkey + user.encode(), hashlib.sha256).digest()
                             if compare_digest(h, client_auth):
                                 return user
@@ -297,26 +284,27 @@ class HXsocksHandler:
                     self.logger.error('user not found. {}'.format(self.client_address))
                     await self.play_dead()
                     return
-                pkey, passwd = KM.key_xchange(client, client_pkey, self.encryptor._key_len)
-                if pkey:
-                    self.logger.info('new key exchange. client: {} {}'.format(client, self.client_address))
+                try:
+                    pkey, passwd = kmgr.key_xchange(client, client_pkey, self.encryptor._key_len)
+                    self.logger.info('new key exchange. client: %s %s', client, self.client_address)
                     h = hmac.new(passwd.encode(), client_pkey + pkey + client.encode(), hashlib.sha256).digest()
-                    scert = KM.SERVER_CERT.get_pub_key()
-                    signature = KM.SERVER_CERT.sign(h, DEFAULT_HASH)
+                    scert = kmgr.SERVER_CERT.get_pub_key()
+                    signature = kmgr.SERVER_CERT.sign(h, DEFAULT_HASH)
                     data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + h + scert + signature + os.urandom(rint)
                     _send(data)
 
                     client_pkey = hashlib.md5(client_pkey).digest()
                     conn = hxs2_connection(client_reader,
                                            client_writer,
-                                           KM.get_skey_by_pubkey(client_pkey),
+                                           kmgr.get_skey_by_pubkey(client_pkey),
                                            self.server.method,
                                            self.server.proxy,
                                            self.logger)
                     await conn.wait_close()
+                    kmgr.del_key(client_pkey)
                     return
-                else:
-                    self.logger.error('Private_key already registered. client: {} {}'.format(client, self.client_address))
+                except ValueError as err:
+                    self.logger.error('key exchange failed. %s %s', self.client_address, err)
                     await self.play_dead()
                     return
             else:
