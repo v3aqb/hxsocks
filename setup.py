@@ -1,7 +1,5 @@
 from setuptools import setup, find_packages
 
-long_description = 'A better encrypted socks proxy'
-
 setup(
     name="hxsocks",
     version="0.0.3",
@@ -11,7 +9,6 @@ setup(
     author_email='null',
     url='https://github.com/v3aqb/hxsocks',
     packages=find_packages(),
-    include_package_data=True,
     entry_points={
         'console_scripts': [
             'hxsocks = hxsocks.__main__:main'
@@ -23,7 +20,7 @@ setup(
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Programming Language :: Python :: 3.5',
         'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
         'Topic :: Internet :: Proxy Servers',
     ],
-    long_description=long_description,
 )

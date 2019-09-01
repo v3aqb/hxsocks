@@ -8,12 +8,10 @@ A better encrypted socks proxy.
 features
 --------
 
-- compatible with shadowsocks
+- compatible with shadowsocks(with AEAD)
 - multiple user on single port
-- authenticated encryption
 - perfect forward security
-- connection reuse
-- connection multiplexing (hxsocks2 only)
+- connection multiplexing
 - some MITM attack protection
 
 install
@@ -55,6 +53,8 @@ run
 ::
 
     hxsocks -c config.yaml
+    or
+    python3 -m hxsocks -c config.yaml
 
 client
 ------
