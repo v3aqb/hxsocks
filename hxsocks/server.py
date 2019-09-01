@@ -36,7 +36,7 @@ import asyncio
 import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, ECC, compare_digest
-from .hxs2_conn import hxs2_connection
+from .hxs2_conn import Hxs2Connection
 from .util import open_connection
 
 
@@ -53,7 +53,7 @@ def parse_hostport(host, default_port=80):
     return host.strip('[]'), default_port
 
 
-class KeyManager(object):
+class UserManager(object):
     def __init__(self, server_cert, limit=10):
         '''server_cert: path to server_cert'''
         self.SERVER_CERT = ECC(from_file=server_cert)
@@ -73,7 +73,6 @@ class KeyManager(object):
         return self.user_pass.items()
 
     def key_xchange(self, user, user_pkey, key_len):
-        # create_key
         # return public_key, passwd_of_user
         if hashlib.md5(user_pkey).digest() in self.pkeyuser:
             raise ValueError('public key already registered. user: %s' % user)
@@ -96,6 +95,19 @@ class KeyManager(object):
     def get_skey_by_pubkey(self, pubkey):
         return self.pkeykey[pubkey]
 
+    def user_access_ctrl(self, server_port, host, ipaddr, user='ss'):
+        # access control, called before each request
+        # int server_port
+        # str host: requested hostname
+        # str ipaddr: client ipaddress
+        # raise ValueError if denied
+        pass
+
+    def user_access_log(self, server_port, host, traffic, ipaddr, user='ss'):
+        # log user access, called after each request
+        # traffic: (upload, download) in bytes
+        pass
+
 
 class ForwardContext:
     def __init__(self):
@@ -103,39 +115,39 @@ class ForwardContext:
         # eof recieved
         self.remote_eof = False
         self.local_eof = False
-        # link status
-        self.writeable = True
-        self.readable = True
+        # traffic
+        self.traffic_from_client = 0
+        self.traffic_from_remote = 0
 
 
 class HandlerFactory:
-    def __init__(self, _class, serverinfo, kmgr, log_level):
+    def __init__(self, _class, serverinfo, user_mgr, log_level):
         self._class = _class
-        self.kmgr = kmgr
+        self.user_mgr = user_mgr
 
         self.serverinfo = serverinfo
-        p = urllib.parse.urlparse(serverinfo)
-        q = urllib.parse.parse_qs(p.query)
-        if p.scheme == 'ss':
-            self.psk, self.method = p.password, p.username
+        parse = urllib.parse.urlparse(serverinfo)
+        query = urllib.parse.parse_qs(parse.query)
+        if parse.scheme == 'ss':
+            self.psk, self.method = parse.password, parse.username
             self.ss_enable = True
-        elif p.scheme == 'hxs':
-            self.psk = q.get('PSK', [''])[0]
-            self.method = q.get('method', [DEFAULT_METHOD])[0]
-            self.ss_enable = self.psk and urllib.parse.parse_qs(p.query).get('ss', ['1'])[0] == '1'
+        elif 'hxs' in parse.scheme:
+            self.psk = query.get('PSK', [''])[0]
+            self.method = query.get('method', [DEFAULT_METHOD])[0]
+            self.ss_enable = self.psk and query.get('ss', ['1'])[0] == '1'
         else:
             raise ValueError('bad serverinfo: {}'.format(self.serverinfo))
 
         self.aead = is_aead(self.method)
 
         # HTTP proxy only
-        proxy = q.get('proxy', [''])[0]
+        proxy = query.get('proxy', [''])[0]
         self.proxy = parse_hostport(proxy) if proxy else None
 
-        self.address = (p.hostname, p.port)
+        self.address = (parse.hostname, parse.port)
 
         self.logger = logging.getLogger('hxs_%d' % self.address[1])
-        self.logger.setLevel(int(q.get('log_level', [log_level])[0]))
+        self.logger.setLevel(int(query.get('log_level', [log_level])[0]))
         hdr = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s',
                                       datefmt='%H:%M:%S')
@@ -155,6 +167,9 @@ class HXsocksHandler:
     def __init__(self, server):
         self.server = server
         self.logger = server.logger
+        self.user_mgr = self.server.user_mgr
+        self.address = self.server.address
+
         self.encryptor = Encryptor(self.server.psk, self.server.method)
         self._buf = b''
 
@@ -192,8 +207,9 @@ class HXsocksHandler:
     async def handle(self, client_reader, client_writer):
         try:
             await self._handle(client_reader, client_writer)
-        except Exception as e:
-            self.logger.error(repr(e))
+        except Exception as err:
+            self.logger.error('HXsocksHandler.handle')
+            self.logger.error(repr(err))
             self.logger.error(traceback.format_exc())
         client_writer.close()
 
@@ -202,8 +218,7 @@ class HXsocksHandler:
         self.client_reader = client_reader
         self.logger.debug('incoming connection %s', self.client_address)
 
-        kmgr = self.server.kmgr
-
+        # read iv
         try:
             fut = self.client_reader.readexactly(self.encryptor._iv_len)
             iv_ = await asyncio.wait_for(fut, timeout=10)
@@ -216,104 +231,96 @@ class HXsocksHandler:
             self.logger.warning('iv read failed, %s', self.client_address)
             return
 
-        req_count = 0
+        # read cmd
+        try:
+            fut = self.read(1)
+            cmd = await asyncio.wait_for(fut, timeout=10)
+        except asyncio.TimeoutError:
+            self.logger.debug('read cmd timed out. %s', self.client_address)
+            return
+        except (ConnectionResetError, asyncio.IncompleteReadError):
+            self.logger.debug('read cmd reset. %s', self.client_address)
+            return
+        except InvalidTag:
+            self.logger.error('InvalidTag while read cmd. %s', self.client_address)
+            await self.play_dead()
+            return
+        cmd = cmd[0]
+        self.logger.debug('cmd: %s %s', cmd, self.client_address)
 
-        while True:
-            if req_count:
-                # Not shadowsocks request
-                self.logger.debug('excepting next request: %s', self.client_address)
-                fut = client_reader.readexactly(2)
-                try:
-                    await asyncio.wait_for(fut, timeout=120)
-                except (OSError, ConnectionResetError, asyncio.IncompleteReadError, asyncio.TimeoutError) as err:
-                    self.logger.debug('closed: %s %s', err, self.client_address)
-                    return
+        if cmd in (1, 3, 4):
+            # A shadowsocks request
+            result = await self.handle_ss(client_writer, addr_type=cmd)
+            if result:
+                await self.play_dead()
+            return
+        if cmd == 20:  # hxsocks2 client key exchange
+            rint = random.randint(64, 2048)
+            req_len = await self.read(2)
+            req_len, = struct.unpack('>H', req_len)
+            data = await self.read(req_len)
+            data = io.BytesIO(data)
+            ts = int(time.time()) // 30
 
+            pklen = data.read(1)[0]
+            client_pkey = data.read(pklen)
+            client_auth = data.read(32)
+
+            def _send(data):
+                if self.encryptor._encryptor:
+                    data = struct.pack('>H', len(data)) + data
+                    ct = self.encryptor.encrypt(data)
+                    client_writer.write(struct.pack('>H', len(ct)) + ct)
+                else:
+                    data = struct.pack('>H', len(data)) + data
+                    client_writer.write(self.encryptor.encrypt(data))
+
+            def auth():
+                for _ts in [ts, ts - 1, ts + 1]:
+                    for user, passwd in self.user_mgr.iter_user():
+                        h = hmac.new(passwd.encode(),
+                                     struct.pack('>I', _ts) + client_pkey + user.encode(),
+                                     hashlib.sha256).digest()
+                        if compare_digest(h, client_auth):
+                            return user
+                return None
+
+            client = auth()
+            if not client:
+                self.logger.error('user not found. %s', self.client_address)
+                await self.play_dead()
+                return
             try:
-                fut = self.read(1)
-                cmd = await asyncio.wait_for(fut, timeout=10)
-            except asyncio.TimeoutError:
-                self.logger.debug('read cmd timed out. %s', self.client_address)
+                pkey, passwd = self.user_mgr.key_xchange(client, client_pkey, self.encryptor._key_len)
+                self.logger.info('new key exchange. client: %s %s', client, self.client_address)
+                h = hmac.new(passwd.encode(), client_pkey + pkey + client.encode(), hashlib.sha256).digest()
+                scert = self.user_mgr.SERVER_CERT.get_pub_key()
+                signature = self.user_mgr.SERVER_CERT.sign(h, DEFAULT_HASH)
+                data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + h + scert + signature + os.urandom(rint)
+                _send(data)
+
+                client_pkey = hashlib.md5(client_pkey).digest()
+                conn = Hxs2Connection(client_reader,
+                                      client_writer,
+                                      client,
+                                      self.user_mgr.get_skey_by_pubkey(client_pkey),
+                                      self.server.method,
+                                      self.server.proxy,
+                                      self.user_mgr,
+                                      self.address[1],
+                                      self.logger)
+                await conn.wait_close()
+                self.user_mgr.del_key(client_pkey)
                 return
-            except (ConnectionResetError, asyncio.IncompleteReadError):
-                self.logger.debug('read cmd reset. %s', self.client_address)
-                return
-            except InvalidTag:
-                self.logger.error('InvalidTag while read cmd. %s', self.client_address)
+            except ValueError as err:
+                self.logger.error('key exchange failed. %s %s', self.client_address, err)
                 await self.play_dead()
                 return
-            cmd = cmd[0]
-            self.logger.debug('cmd: %s %s', cmd, self.client_address)
 
-            if cmd in (1, 3, 4):
-                # A shadowsocks request
-                result = await self.handle_ss(client_writer, addr_type=cmd)
-                if result:
-                    await self.play_dead()
-                return
-            if cmd == 20:  # hxsocks2 client key exchange
-                req_count += 1
-                rint = random.randint(64, 2048)
-                req_len = await self.read(2)
-                req_len, = struct.unpack('>H', req_len)
-                data = await self.read(req_len)
-                data = io.BytesIO(data)
-                ts = int(time.time()) // 30
-
-                pklen = data.read(1)[0]
-                client_pkey = data.read(pklen)
-                client_auth = data.read(32)
-
-                def _send(data):
-                    if self.encryptor._encryptor:
-                        data = struct.pack('>H', len(data)) + data
-                        ct = self.encryptor.encrypt(data)
-                        client_writer.write(struct.pack('>H', len(ct)) + ct)
-                    else:
-                        data = struct.pack('>H', len(data)) + data
-                        client_writer.write(self.encryptor.encrypt(data))
-
-                def auth():
-                    for _ts in [ts, ts - 1, ts + 1]:
-                        for user, passwd in kmgr.iter_user():
-                            h = hmac.new(passwd.encode(), struct.pack('>I', _ts) + client_pkey + user.encode(), hashlib.sha256).digest()
-                            if compare_digest(h, client_auth):
-                                return user
-
-                client = auth()
-                if not client:
-                    self.logger.error('user not found. %s', self.client_address)
-                    await self.play_dead()
-                    return
-                try:
-                    pkey, passwd = kmgr.key_xchange(client, client_pkey, self.encryptor._key_len)
-                    self.logger.info('new key exchange. client: %s %s', client, self.client_address)
-                    h = hmac.new(passwd.encode(), client_pkey + pkey + client.encode(), hashlib.sha256).digest()
-                    scert = kmgr.SERVER_CERT.get_pub_key()
-                    signature = kmgr.SERVER_CERT.sign(h, DEFAULT_HASH)
-                    data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + h + scert + signature + os.urandom(rint)
-                    _send(data)
-
-                    client_pkey = hashlib.md5(client_pkey).digest()
-                    conn = hxs2_connection(client_reader,
-                                           client_writer,
-                                           client,
-                                           kmgr.get_skey_by_pubkey(client_pkey),
-                                           self.server.method,
-                                           self.server.proxy,
-                                           self.logger)
-                    await conn.wait_close()
-                    kmgr.del_key(client_pkey)
-                    return
-                except ValueError as err:
-                    self.logger.error('key exchange failed. %s %s', self.client_address, err)
-                    await self.play_dead()
-                    return
-            else:
-                # TODO: security
-                self.logger.error('bad cmd: %s, %s', cmd, self.client_address)
-                await self.play_dead()
-                return
+        # TODO: security log
+        self.logger.error('bad cmd: %s, %s', cmd, self.client_address)
+        await self.play_dead()
+        return
 
     async def play_dead(self, timeout=1):
         for _ in range(10):
@@ -345,7 +352,15 @@ class HXsocksHandler:
             self.logger.error(traceback.format_exc())
             return 1
 
-        self.logger.info('connect to %s:%d %r %r', addr, port, self.client_address, self.server.proxy)
+        # access control
+        try:
+            self.user_mgr.user_access_ctrl(self.address[1], addr, self.client_address)
+        except ValueError as err:
+            self.logger.error('access denied! %s:%s, %s %s', addr, port, err)
+            return
+
+        # create connection
+        self.logger.info('connect to %s:%d %r %s', addr, port, self.client_address, self.address[1])
 
         try:
             remote_reader, remote_writer = await open_connection(addr, port, self.server.proxy)
@@ -353,6 +368,7 @@ class HXsocksHandler:
             self.logger.error('connect to %s:%s failed! %r', addr, port, err)
             return
 
+        # forward
         context = ForwardContext()
 
         tasks = [self.ss_forward_a(remote_writer, context),
@@ -365,8 +381,12 @@ class HXsocksHandler:
             self.logger.error(traceback.format_exc())
         remote_writer.close()
 
+        # access log
+        traffic = (context.traffic_from_client, context.traffic_from_remote)
+        self.user_mgr.user_access_log(self.address[1], addr, traffic, self.client_address)
+
     async def ss_forward_a(self, write_to, context, timeout=60):
-        # data from ss client
+        # data from ss client, decrypt, sent to remote
         while True:
             try:
                 fut = self.read()
@@ -382,6 +402,7 @@ class HXsocksHandler:
 
             if not data:
                 break
+            context.traffic_from_client += len(data)
             try:
                 write_to.write(data)
                 await write_to.drain()
@@ -395,7 +416,7 @@ class HXsocksHandler:
             pass
 
     async def ss_forward_b(self, read_from, write_to, cipher, context, timeout=60):
-        # data from remote
+        # data from remote, encrypt, sent to client
         while True:
             try:
                 fut = read_from.read(self.bufsize)
@@ -411,6 +432,9 @@ class HXsocksHandler:
 
             if not data:
                 break
+
+            context.traffic_from_remote += len(data)
+
             data = cipher(data)
             try:
                 write_to.write(data)

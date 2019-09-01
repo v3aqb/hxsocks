@@ -38,18 +38,32 @@ CLOSED = 3
 END_STREAM_FLAG = 1
 
 
-class hxs2_connection():
+class ForwardContext:
+    def __init__(self, host):
+        self.host = host
+        self.last_active = time.time()
+        # eof recieved
+        self.stream_status = OPEN
+        self.remote_status = OPEN
+        # traffic
+        self.traffic_from_client = 0
+        self.traffic_from_remote = 0
+
+
+class Hxs2Connection():
     bufsize = 8192
 
-    def __init__(self, reader, writer, user, skey, method, proxy, logger):
+    def __init__(self, reader, writer, user, skey, method, proxy, user_mgr, s_port, logger):
         self.__cipher = AEncryptor(skey, method, CTX)
-        self._user = user
         self._client_reader = reader
         self._client_writer = writer
         self._client_address = writer.get_extra_info('peername')[0]
         self._client_writer.transport.set_write_buffer_limits(0, 0)
         self._proxy = proxy
+        self._s_port = s_port
         self._logger = logger
+        self.user = user
+        self.user_mgr = user_mgr
 
         self._init_time = time.time()
         self._last_active = self._init_time
@@ -57,10 +71,8 @@ class hxs2_connection():
         self._next_stream_id = 1
 
         self._stream_writer = {}
-        self._stream_status = {}
-        self._stream_last_active = {}
-        self._remote_status = {}
         self._stream_task = {}
+        self._stream_context = {}
 
         self._client_writer_lock = asyncio.Lock()
 
@@ -136,20 +148,21 @@ class hxs2_connection():
                         self._logger.debug('data_len mismatch')
                         break
                     # check if remote socket writable
-                    if self._remote_status[stream_id] & EOF_SENT:
+                    if self._stream_context[stream_id].remote_status & EOF_SENT:
                         continue
                     # sent data to stream
                     try:
                         self._stream_writer[stream_id].write(data)
-                        self._stream_last_active[stream_id] = time.time()
+                        self._stream_context[stream_id].traffic_from_client += len(data)
+                        self._stream_context[stream_id].last_active = time.time()
                         await self._stream_writer[stream_id].drain()
                     except OSError:
                         # remote closed, reset stream
-                        self._stream_status[stream_id] = CLOSED
+                        self._stream_context[stream_id].stream_status = CLOSED
                         if stream_id in self._stream_writer:
                             self._stream_writer[stream_id].close()
                             del self._stream_writer[stream_id]
-                        self._remote_status[stream_id] = CLOSED
+                        self._stream_context[stream_id].remote_status = CLOSED
                 elif frame_type == 1:
                     # HEADER
                     if self._next_stream_id == stream_id:
@@ -163,25 +176,29 @@ class hxs2_connection():
                         asyncio.ensure_future(self.create_connection(stream_id, host, port))
 
                     elif stream_id < self._next_stream_id:
+                        self._logger.debug('sid %s END_STREAM. status %s',
+                                           stream_id,
+                                           self._stream_context[stream_id].stream_status)
                         if frame_flags & END_STREAM_FLAG:
-                            if self._stream_status[stream_id] == OPEN:
-                                self._stream_status[stream_id] = EOF_RECV
+                            if self._stream_context[stream_id].stream_status == OPEN:
+                                self._stream_context[stream_id].stream_status = EOF_RECV
                                 self._stream_writer[stream_id].write_eof()
-                                self._remote_status[stream_id] = EOF_SENT
-                            elif self._stream_status[stream_id] == EOF_SENT:
-                                self._stream_status[stream_id] = CLOSED
+                                self._stream_context[stream_id].remote_status = EOF_SENT
+                            elif self._stream_context[stream_id].stream_status == EOF_SENT:
+                                self._stream_context[stream_id].stream_status = CLOSED
                                 self._stream_writer[stream_id].close()
-                                self._remote_status[stream_id] = CLOSED
+                                self._stream_context[stream_id].remote_status = CLOSED
                                 del self._stream_writer[stream_id]
+                                self.log_access(stream_id)
                             else:
                                 self._logger.error('recv END_STREAM_FLAG, stream already closed.')
                 elif frame_type == 3:
                     # RST_STREAM
-                    self._stream_status[stream_id] = CLOSED
+                    self._stream_context[stream_id].stream_status = CLOSED
                     if stream_id in self._stream_writer:
                         self._stream_writer[stream_id].close()
                         del self._stream_writer[stream_id]
-                    self._remote_status[stream_id] = CLOSED
+                    self._stream_context[stream_id].remote_status = CLOSED
                 elif frame_type == 6:
                     # PING
                     if frame_flags == 0:
@@ -209,9 +226,11 @@ class hxs2_connection():
                 pass
 
     async def create_connection(self, stream_id, host, port):
-        self._logger.info('connecting %s:%s %s %s', host, port, self._user, self._client_address)
+        self._logger.info('connecting %s:%s %s %s', host, port, self.user, self._client_address)
         timelog = time.time()
+
         try:
+            self.user_mgr.user_access_ctrl(self._s_port, host, self._client_address, self.user)
             reader, writer = await open_connection(host, port, self._proxy)
             writer.transport.set_write_buffer_limits(0, 0)
         except Exception as err:
@@ -226,16 +245,14 @@ class hxs2_connection():
                 self._logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
-            if stream_id in self._stream_status and self._stream_status[stream_id] == CLOSED:
+            if stream_id in self._stream_context and self._stream_context[stream_id].stream_status == CLOSED:
                 writer.close()
                 return
             data = b'\x00' * random.randint(64, 256)
             await self.send_frame(1, 0, stream_id, data)
             # registor stream
             self._stream_writer[stream_id] = writer
-            self._stream_status[stream_id] = OPEN
-            self._remote_status[stream_id] = OPEN
-            self._stream_last_active[stream_id] = time.time()
+            self._stream_context[stream_id] = ForwardContext(host)
             # start forward from remote_reader to client_writer
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
@@ -262,35 +279,50 @@ class hxs2_connection():
     async def read_from_remote(self, stream_id, remote_reader):
         self._logger.debug('start read from stream')
         timeout_count = 0
-        while not self._remote_status[stream_id] & EOF_RECV:
+        while not self._stream_context[stream_id].remote_status & EOF_RECV:
             fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
-                self._stream_last_active[stream_id] = time.time()
+                self._stream_context[stream_id].last_active = time.time()
             except asyncio.TimeoutError:
                 timeout_count += 1
-                if self._stream_status[stream_id] != OPEN:
+                if self._stream_context[stream_id].stream_status != OPEN:
                     data = b''
-                elif time.time() - self._stream_last_active[stream_id] < 120:
+                elif time.time() - self._stream_context[stream_id].last_active < 120:
                     continue
-                self._remote_status[stream_id] = CLOSED
+                self._stream_context[stream_id].remote_status = CLOSED
                 # TODO: reset stream
                 data = b''
             except OSError:
-                self._remote_status[stream_id] = CLOSED
+                self._stream_context[stream_id].remote_status = CLOSED
                 # TODO: reset stream
                 data = b''
             if not data:
-                self._remote_status[stream_id] |= EOF_RECV
+                self._stream_context[stream_id].remote_status |= EOF_RECV
                 await self.send_frame(1, END_STREAM_FLAG, stream_id,
                                       b'\x00' * random.randint(8, 2048))
-                self._stream_status[stream_id] |= EOF_SENT
-                if self._stream_status[stream_id] & EOF_RECV:
+                self._stream_context[stream_id].stream_status |= EOF_SENT
+                if self._stream_context[stream_id].stream_status & EOF_RECV:
                     if stream_id in self._stream_writer:
                         self._stream_writer[stream_id].close()
                         del self._stream_writer[stream_id]
-                    self._remote_status[stream_id] = CLOSED
-                return
-            if not self._stream_status[stream_id] & EOF_SENT:
+                    self._stream_context[stream_id].remote_status = CLOSED
+                    self._logger.debug('sid %s stream closed.(rfr)', stream_id)
+                    self.log_access(stream_id)
+                break
+            if not self._stream_context[stream_id].stream_status & EOF_SENT:
+                self._stream_context[stream_id].traffic_from_remote += len(data)
                 payload = struct.pack('>H', len(data)) + data + b'\x00' * random.randint(8, 255)
                 await self.send_frame(0, 0, stream_id, payload)
+        self._logger.debug('sid %s read_from_remote end. status %s',
+                           stream_id,
+                           self._stream_context[stream_id].stream_status)
+
+    def log_access(self, stream_id):
+        traffic = (self._stream_context[stream_id].traffic_from_client,
+                   self._stream_context[stream_id].traffic_from_remote)
+        self.user_mgr.user_access_log(self._s_port,
+                                      self._stream_context[stream_id].host,
+                                      traffic,
+                                      self._client_address,
+                                      self.user)

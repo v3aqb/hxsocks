@@ -24,7 +24,7 @@ import yaml
 import asyncio
 import argparse
 
-from .server import HandlerFactory, HXsocksHandler, KeyManager, ECC
+from .server import HandlerFactory, HXsocksHandler, UserManager, ECC
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -54,17 +54,17 @@ def main():
         sys.stderr.write('server cert not found, creating...\n')
         ECC(key_len=32).save(cert_path)
 
-    kmgr = KeyManager(cert_path)
+    user_mgr = UserManager(cert_path)
 
     # add user
-    for user, pass_ in cfg['users'].items():
-        kmgr.add_user(user, pass_)
+    for user, passwd in cfg['users'].items():
+        user_mgr.add_user(user, passwd)
 
     loop = asyncio.get_event_loop()
     loop.set_default_executor(ThreadPoolExecutor(20))
 
     for server in servers:
-        handler = HandlerFactory(HXsocksHandler, server, kmgr, log_level)
+        handler = HandlerFactory(HXsocksHandler, server, user_mgr, log_level)
         loop = asyncio.get_event_loop()
         coro = asyncio.start_server(handler.handle, handler.address[0], handler.address[1], loop=loop)
         server = loop.run_until_complete(coro)
