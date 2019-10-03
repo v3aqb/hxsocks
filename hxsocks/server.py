@@ -53,7 +53,7 @@ def parse_hostport(host, default_port=80):
     return host.strip('[]'), default_port
 
 
-class UserManager(object):
+class UserManager:
     def __init__(self, server_cert, limit=10):
         '''server_cert: path to server_cert'''
         self.SERVER_CERT = ECC(from_file=server_cert)
