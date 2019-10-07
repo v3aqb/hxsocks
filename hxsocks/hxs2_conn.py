@@ -51,7 +51,7 @@ class ForwardContext:
 
 
 class Hxs2Connection():
-    bufsize = 8192
+    bufsize = 32768
 
     def __init__(self, reader, writer, user, skey, method, proxy, user_mgr, s_port, logger):
         self.__cipher = AEncryptor(skey, method, CTX)

@@ -162,7 +162,7 @@ class HandlerFactory:
 
 
 class HXsocksHandler:
-    bufsize = 8192
+    bufsize = 32768
 
     def __init__(self, server):
         self.server = server
