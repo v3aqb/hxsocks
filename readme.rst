@@ -59,4 +59,4 @@ run
 client
 ------
 
-see `fwlite <https://github.com/v3aqb/fwlite/blob/master/fgfw-lite/hxsocks.py>`_
+see `fwlite-cli <https://github.com/v3aqb/fwlite-cli/blob/master/fwlite_cli/hxsocks2.py>`_
