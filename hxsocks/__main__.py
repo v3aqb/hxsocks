@@ -20,14 +20,13 @@
 
 import os
 import sys
-import yaml
 import asyncio
 import argparse
 import hashlib
-
-from .server import HandlerFactory, HXsocksHandler, UserManager, ECC
-
 from concurrent.futures import ThreadPoolExecutor
+
+import yaml
+from .server import HandlerFactory, HXsocksHandler, UserManager, ECC
 
 
 def main():
