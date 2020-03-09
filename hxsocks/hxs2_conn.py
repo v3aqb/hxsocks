@@ -299,8 +299,11 @@ class Hxs2Connection():
                 data = b''
             if not data:
                 self._stream_context[stream_id].remote_status |= EOF_RECV
-                await self.send_frame(1, END_STREAM_FLAG, stream_id,
-                                      b'\x00' * random.randint(8, 2048))
+                try:
+                    await self.send_frame(1, END_STREAM_FLAG, stream_id,
+                                          b'\x00' * random.randint(8, 2048))
+                except OSError:
+                    pass
                 self._stream_context[stream_id].stream_status |= EOF_SENT
                 if self._stream_context[stream_id].stream_status & EOF_RECV:
                     if stream_id in self._stream_writer:
