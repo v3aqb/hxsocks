@@ -23,6 +23,7 @@ import sys
 import yaml
 import asyncio
 import argparse
+import hashlib
 
 from .server import HandlerFactory, HXsocksHandler, UserManager, ECC
 
@@ -55,6 +56,9 @@ def main():
         ECC(key_len=32).save(cert_path)
 
     user_mgr = UserManager(cert_path)
+    cert = user_mgr.SERVER_CERT.get_pub_key()
+    cert_hash = hashlib.sha256(cert).hexdigest()[:8]
+    sys.stderr.write('load server cert %s\n' % cert_hash)
 
     # add user
     for user, passwd in cfg['users'].items():
