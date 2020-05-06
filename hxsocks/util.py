@@ -22,11 +22,11 @@ import asyncio
 import ipaddress
 
 
-async def get_ip_address(self, host):
+async def get_ip_address(host):
     try:
-        return ipaddress(host)
+        return ipaddress.ip_address(host)
     except Exception:
-        return ipaddress('1.1.1.1')
+        return ipaddress.ip_address('1.1.1.1')
 
 
 async def request_is_loopback(addr):
@@ -36,6 +36,7 @@ async def request_is_loopback(addr):
             return ip
     except Exception:
         pass
+    return None
 
 
 async def open_connection(addr, port, proxy):
@@ -57,5 +58,5 @@ async def open_connection(addr, port, proxy):
         return remote_reader, remote_writer
 
     fut = asyncio.open_connection(addr, port)
-    remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=4)
+    remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=6)
     return remote_reader, remote_writer
