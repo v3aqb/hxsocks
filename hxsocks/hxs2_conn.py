@@ -302,7 +302,7 @@ class Hxs2Connection():
                 try:
                     await self.send_frame(1, END_STREAM_FLAG, stream_id,
                                           b'\x00' * random.randint(8, 2048))
-                except OSError:
+                except ConnectionResetError:
                     pass
                 self._stream_context[stream_id].stream_status |= EOF_SENT
                 if self._stream_context[stream_id].stream_status & EOF_RECV:
