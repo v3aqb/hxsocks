@@ -198,11 +198,11 @@ class HXsocksHandler:
                 buf, self._buf = self._buf, b''
                 return buf
             return await self._read()
-        else:
-            while len(self._buf) < size:
-                self._buf += (await self._read(size - len(self._buf)))
-            _buf, self._buf = self._buf[:size], self._buf[size:]
-            return _buf
+
+        while len(self._buf) < size:
+            self._buf += (await self._read(size - len(self._buf)))
+        _buf, self._buf = self._buf[:size], self._buf[size:]
+        return _buf
 
     async def handle(self, client_reader, client_writer):
         try:
@@ -335,10 +335,10 @@ class HXsocksHandler:
         # get header...
         try:
             assert addr_type in (1, 3, 4)
-            if addr_type & 15 == 1:
+            if addr_type == 1:
                 addr = await self.read(4)
                 addr = socket.inet_ntoa(addr)
-            elif addr_type & 15 == 3:
+            elif addr_type == 3:
                 data = await self.read(1)
                 addr = await self.read(data[0])
                 addr = addr.decode('ascii')
