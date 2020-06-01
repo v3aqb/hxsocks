@@ -323,7 +323,8 @@ class HXsocksHandler:
         return
 
     async def play_dead(self, timeout=1):
-        for _ in range(10):
+        count = random.randint(6, 15)
+        for _ in range(count):
             fut = self.client_reader.read(self.bufsize)
             try:
                 await asyncio.wait_for(fut, timeout)
