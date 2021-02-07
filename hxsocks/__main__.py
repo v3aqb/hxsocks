@@ -20,13 +20,10 @@
 
 import os
 import sys
-import asyncio
 import argparse
-import hashlib
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 
-import yaml
-from .server import HandlerFactory, HXsocksHandler, UserManager, ECC
+from .start_server import start_hxs_server
 
 
 def main():
@@ -41,37 +38,9 @@ def main():
     if not os.path.exists(args.c):
         sys.stderr.write('config file {} not exist!\n'.format(args.c))
         sys.exit()
-    else:
-        with open(args.c, 'r') as ymlfile:
-            cfg = yaml.safe_load(ymlfile)
-        servers = cfg['servers']
-        log_level = cfg['log_level'] if 'log_level' in cfg else 20
-
-    # server cert
-    cert_path = os.path.join(os.path.dirname(os.path.abspath(args.c)), 'cert.pem')
-
-    if not os.path.exists(cert_path):
-        sys.stderr.write('server cert not found, creating...\n')
-        ECC(key_len=32).save(cert_path)
-
-    user_mgr = UserManager(cert_path)
-    cert = user_mgr.SERVER_CERT.get_pub_key()
-    cert_hash = hashlib.sha256(cert).hexdigest()[:8]
-    sys.stderr.write('load server cert %s\n' % cert_hash)
-
-    # add user
-    for user, passwd in cfg['users'].items():
-        user_mgr.add_user(user, passwd)
+    start_hxs_server(args.c)
 
     loop = asyncio.get_event_loop()
-    loop.set_default_executor(ThreadPoolExecutor(20))
-
-    for server in servers:
-        handler = HandlerFactory(HXsocksHandler, server, user_mgr, log_level)
-        loop = asyncio.get_event_loop()
-        coro = asyncio.start_server(handler.handle, handler.address[0], handler.address[1], loop=loop)
-        server = loop.run_until_complete(coro)
-
     loop.run_forever()
 
 
