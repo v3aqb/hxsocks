@@ -361,7 +361,7 @@ class HXsocksHandler:
             return
 
         # create connection
-        self.logger.info('connect to %s:%d %r %s', addr, port, self.client_address, self.address[1])
+        self.logger.info('connect to %s:%d %r', addr, port, self.client_address)
 
         try:
             remote_reader, remote_writer = await open_connection(addr, port, self.server.proxy)
