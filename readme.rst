@@ -8,7 +8,7 @@ A better encrypted socks proxy.
 features
 --------
 
-- compatible with shadowsocks(with AEAD)
+- compatible with shadowsocks(with UDP relay)
 - multiple user on single port
 - perfect forward security
 - connection multiplexing
@@ -42,9 +42,13 @@ configure file example
     servers:
         - ss://aes-128-gcm:password@0.0.0.0:8138
         - ss://aes-128-cfb:password@0.0.0.0:8139
+        - hxs://0.0.0.0:8140/?method=aes-128-gcm&PSK=password&proxy=127.0.0.1:8120
     users:
         user: password
         user2: password2
+    udp_enable: false   # boolean, port_number, or list of port enabled [8138, 8139]
+    udp_timeout: 60
+    udp_mode: 2         # 0 for fullcone, 1 for restricted, 2 for port_restricted
     log_level: 20
 
 run
