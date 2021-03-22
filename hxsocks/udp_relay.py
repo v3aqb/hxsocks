@@ -103,30 +103,31 @@ class udp_relay_server:
         self.logger.addHandler(hdr)
 
     async def serve_forever(self):
+        self.logger.info('start udp_relay server %r', self.server_addr)
         self.server_stream = await asyncio_dgram.bind(self.server_addr)
         while True:
             data, client_addr = await self.server_stream.recv()
             asyncio.ensure_future(self.handle(client_addr, data))
 
     async def handle(self, client_addr, data):
-        # try:
-        remote_addr, dgram, data = self.decrypt_parse(data)
-        # except Exception as err:
-        #     self.logger.error('%s %s', repr(err), repr(client_addr))
-        #     return
-        self.logger.debug('on_server_recv, %r, %r', client_addr, remote_addr)
-        relay = self.get_relay(client_addr)
-        await relay.send(dgram, remote_addr, data)
+        try:
+            remote_addr, dgram, data = self.decrypt_parse(data)
+        except Exception as err:
+            self.logger.error('%s %s', repr(err), repr(client_addr))
+        else:
+            self.logger.debug('on_server_recv, %r, %r', client_addr, remote_addr)
+            relay = self.get_relay(client_addr)
+            await relay.send(dgram, remote_addr, data)
 
     async def on_remote_recv(self, client_addr, remote_addr, dgram, data):
         '''
             create dgram, encrypt and send to client
         '''
         self.logger.debug('on_remote_recv %r, %r', remote_addr, client_addr)
-        remote_ip = ipaddress.ip_address(remote_addr[0])
         if data:
             buf = data
         else:
+            remote_ip = ipaddress.ip_address(remote_addr[0])
             buf = b'\x01' if remote_ip.version == 4 else b'\x04'
             buf += remote_ip.packed
             buf += struct.pack(b'>H', remote_addr[1])
@@ -169,7 +170,7 @@ class udp_relay_server:
             return udp_relay object
         '''
         if client_addr not in self.relay_holder:
-            self.logger.info('start udp_relay %r', client_addr)
+            self.logger.debug('start udp_relay %r', client_addr)
             relay = udp_relay(self, client_addr, self.timeout, self.mode)
             self.relay_holder[client_addr] = relay
         return self.relay_holder[client_addr]
