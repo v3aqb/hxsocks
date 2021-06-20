@@ -26,7 +26,7 @@ import random
 import traceback
 
 from hxcrypto import InvalidTag, AEncryptor
-from .util import open_connection
+from hxsocks.util import open_connection
 
 
 CTX = b'hxsocks2'
@@ -70,7 +70,7 @@ class Hxs2Connection():
         self.__cipher = AEncryptor(skey, method, CTX)
         self._client_reader = reader
         self._client_writer = writer
-        self._client_address = writer.get_extra_info('peername')[0]
+        self._client_address = writer.get_extra_info('peername')
         self._client_writer.transport.set_write_buffer_limits(0, 0)
         self._proxy = proxy
         self._s_port = s_port
