@@ -69,8 +69,15 @@ class UserManager:
     def remove_user(self, user):
         del self.user_pass[user]
 
-    def iter_user(self):
-        return self.user_pass.items()
+    def hxs2_auth(self, ts, client_pkey, client_auth):
+        for _ts in [ts, ts - 1, ts + 1]:
+            for user, passwd in self.user_pass.items():
+                hash_ = hmac.new(passwd.encode(),
+                                 struct.pack('>I', _ts) + client_pkey + user.encode(),
+                                 hashlib.sha256).digest()
+                if compare_digest(hash_, client_auth):
+                    return user
+        return None
 
     def key_xchange(self, user, user_pkey, key_len):
         # return public_key, passwd_of_user
@@ -214,7 +221,7 @@ class HXsocksHandler:
         client_writer.close()
 
     async def _handle(self, client_reader, client_writer):
-        self.client_address = client_writer.get_extra_info('peername')[0]
+        self.client_address = client_writer.get_extra_info('peername')
         self.client_reader = client_reader
         self.logger.debug('incoming connection %s', self.client_address)
 
@@ -260,7 +267,7 @@ class HXsocksHandler:
             req_len, = struct.unpack('>H', req_len)
             data = await self.read(req_len)
             data = io.BytesIO(data)
-            ts = int(time.time()) // 30
+            ts_ = int(time.time()) // 30
 
             pklen = data.read(1)[0]
             client_pkey = data.read(pklen)
@@ -269,23 +276,13 @@ class HXsocksHandler:
             def _send(data):
                 if self.encryptor._encryptor:
                     data = struct.pack('>H', len(data)) + data
-                    ct = self.encryptor.encrypt(data)
-                    client_writer.write(struct.pack('>H', len(ct)) + ct)
+                    ciphertext = self.encryptor.encrypt(data)
+                    client_writer.write(struct.pack('>H', len(ciphertext)) + ciphertext)
                 else:
                     data = struct.pack('>H', len(data)) + data
                     client_writer.write(self.encryptor.encrypt(data))
 
-            def auth():
-                for _ts in [ts, ts - 1, ts + 1]:
-                    for user, passwd in self.user_mgr.iter_user():
-                        h = hmac.new(passwd.encode(),
-                                     struct.pack('>I', _ts) + client_pkey + user.encode(),
-                                     hashlib.sha256).digest()
-                        if compare_digest(h, client_auth):
-                            return user
-                return None
-
-            client = auth()
+            client = self.user_mgr.hxs2_auth(ts_, client_pkey, client_auth)
             if not client:
                 self.logger.error('user not found. %s', self.client_address)
                 await self.play_dead()
@@ -293,10 +290,10 @@ class HXsocksHandler:
             try:
                 pkey, passwd = self.user_mgr.key_xchange(client, client_pkey, self.encryptor._key_len)
                 self.logger.info('new key exchange. client: %s %s', client, self.client_address)
-                h = hmac.new(passwd.encode(), client_pkey + pkey + client.encode(), hashlib.sha256).digest()
+                hash_ = hmac.new(passwd.encode(), client_pkey + pkey + client.encode(), hashlib.sha256).digest()
                 scert = self.user_mgr.SERVER_CERT.get_pub_key()
-                signature = self.user_mgr.SERVER_CERT.sign(h, DEFAULT_HASH)
-                data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + h + scert + signature + os.urandom(rint)
+                signature = self.user_mgr.SERVER_CERT.sign(hash_, DEFAULT_HASH)
+                data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + hash_ + scert + signature + os.urandom(rint)
                 _send(data)
 
                 client_pkey = hashlib.md5(client_pkey).digest()
