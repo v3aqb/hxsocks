@@ -156,8 +156,7 @@ class HandlerFactory:
         self.logger = logging.getLogger('hxs_%d' % self.address[1])
         self.logger.setLevel(int(query.get('log_level', [log_level])[0]))
         hdr = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s',
-                                      datefmt='%H:%M:%S')
+        formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
         hdr.setFormatter(formatter)
         self.logger.addHandler(hdr)
 
