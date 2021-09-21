@@ -151,13 +151,13 @@ class Hxs2Connection():
                     self._last_active = time.time()
 
                 self._logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
-                if frame_type == DATA:  # 1
+                if frame_type == DATA:  # 0
                     # first 2 bytes of payload indicates data_len
                     data_len, = struct.unpack('>H', payload.read(2))
                     data = payload.read(data_len)
                     if len(data) != data_len:
                         # something went wrong, destory connection
-                        self._logger.debug('data_len mismatch')
+                        self._logger.error('data_len mismatch')
                         break
                     # check if remote socket writable
                     if self._stream_context[stream_id].remote_status & EOF_SENT:
@@ -248,7 +248,8 @@ class Hxs2Connection():
                 self._logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
-            if stream_id in self._stream_context and self._stream_context[stream_id].stream_status == CLOSED:
+            if stream_id in self._stream_context and \
+                    self._stream_context[stream_id].stream_status == CLOSED:
                 writer.close()
                 return
             data = bytes(random.randint(64, 256))
