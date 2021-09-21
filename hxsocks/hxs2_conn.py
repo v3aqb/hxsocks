@@ -211,7 +211,7 @@ class Hxs2Connection():
                     self._stream_context[stream_id].remote_status = CLOSED
                 elif frame_type == PING:  # 6
                     if frame_flags == 0:
-                        await self.send_frame(PING, PONG, 0, bytes(random.randint(64, 256)))
+                        self.send_frame(PING, PONG, 0, bytes(random.randint(64, 256)))
                 elif frame_type == GOAWAY:  # 7
                     # GOAWAY
                     # no more new stream
@@ -240,7 +240,7 @@ class Hxs2Connection():
             # tell client request failed.
             self._logger.error('connect %s:%s failed: %r', host, port, err)
             data = b'\x01' * random.randint(64, 256)
-            await self.send_frame(RST_STREAM, 0, stream_id, data)
+            self.send_frame(RST_STREAM, 0, stream_id, data)
         else:
             # tell client request success, header frame, first byte is \x00
             timelog = time.time() - timelog
@@ -253,7 +253,7 @@ class Hxs2Connection():
                 writer.close()
                 return
             data = bytes(random.randint(64, 256))
-            await self.send_frame(HEADERS, OPEN, stream_id, data)
+            self.send_frame(HEADERS, OPEN, stream_id, data)
             # registor stream
             self._stream_writer[stream_id] = writer
             self._stream_context[stream_id] = ForwardContext(host)
@@ -261,29 +261,26 @@ class Hxs2Connection():
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
-    async def send_frame(self, type_, flags, stream_id, payload):
+    def send_frame(self, type_, flags, stream_id, payload):
         self._logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
         if type_ != 6:
             self._last_active = time.time()
 
-        await self._client_writer_lock.acquire()
         try:
             header = struct.pack('>BBH', type_, flags, stream_id)
             data = header + payload
             ct = self.__cipher.encrypt(data)
             self._client_writer.write(struct.pack('>H', len(ct)) + ct)
-            await self._client_writer.drain()
         except OSError as err:
             # destroy connection
             self._logger.error('send_frame error %r', err)
             raise err
-        finally:
-            self._client_writer_lock.release()
 
     async def read_from_remote(self, stream_id, remote_reader):
         self._logger.debug('start read from stream')
         timeout_count = 0
         while not self._stream_context[stream_id].remote_status & EOF_RECV:
+            await self._client_writer.drain()
             fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
@@ -304,8 +301,8 @@ class Hxs2Connection():
             if not data:
                 self._stream_context[stream_id].remote_status |= EOF_RECV
                 try:
-                    await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id,
-                                          bytes(random.randint(8, 2048)))
+                    self.send_frame(HEADERS, END_STREAM_FLAG, stream_id,
+                                    bytes(random.randint(8, 2048)))
                 except ConnectionResetError:
                     pass
                 self._stream_context[stream_id].stream_status |= EOF_SENT
@@ -320,7 +317,7 @@ class Hxs2Connection():
             if not self._stream_context[stream_id].stream_status & EOF_SENT:
                 self._stream_context[stream_id].traffic_from_remote += len(data)
                 payload = struct.pack('>H', len(data)) + data + bytes(random.randint(8, 255))
-                await self.send_frame(DATA, 0, stream_id, payload)
+                self.send_frame(DATA, 0, stream_id, payload)
         self._logger.debug('sid %s read_from_remote end. status %s',
                            stream_id,
                            self._stream_context[stream_id].stream_status)
