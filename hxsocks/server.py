@@ -22,7 +22,6 @@ import os
 import socket
 import struct
 import logging
-import re
 import io
 import time
 import traceback
@@ -36,20 +35,13 @@ import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
 from .hxs2_conn import Hxs2Connection
-from .util import open_connection
+from .util import open_connection, parse_hostport
 
 
 DEFAULT_METHOD = 'aes-128-cfb'
 DEFAULT_HASH = 'SHA256'
 MAC_LEN = 16
 CTX = b'hxsocks'
-
-
-def parse_hostport(host, default_port=80):
-    m = re.match(r'(.+):(\d+)$', host)
-    if m:
-        return m.group(1).strip('[]'), int(m.group(2))
-    return host.strip('[]'), default_port
 
 
 class ForwardContext:
