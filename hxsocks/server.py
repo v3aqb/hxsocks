@@ -33,7 +33,7 @@ import hmac
 import asyncio
 import asyncio.streams
 
-from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
+from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, ECC
 from .hxs2_conn import Hxs2Connection
 from .util import open_connection, parse_hostport
 
