@@ -105,6 +105,7 @@ class HXsocksHandler:
         self.address = self.server.address
 
         self.encryptor = Encryptor(self.server.psk, self.server.method)
+        self.__key = self.server.psk
         self._buf = b''
 
         self.client_address = None
@@ -279,7 +280,7 @@ class HXsocksHandler:
 
         # access control
         try:
-            self.user_mgr.user_access_ctrl(self.address[1], addr, self.client_address)
+            self.user_mgr.user_access_ctrl(self.address[1], addr, self.client_address, self.__key)
         except ValueError as err:
             self.logger.error('access denied! %s:%s, %s %s', addr, port, err)
             return
@@ -308,7 +309,7 @@ class HXsocksHandler:
 
         # access log
         traffic = (context.traffic_from_client, context.traffic_from_remote)
-        self.user_mgr.user_access_log(self.address[1], addr, traffic, self.client_address)
+        self.user_mgr.user_access_log(self.address[1], addr, traffic, self.client_address, self.__key)
 
     async def ss_forward_a(self, write_to, context, timeout=60):
         # data from ss client, decrypt, sent to remote

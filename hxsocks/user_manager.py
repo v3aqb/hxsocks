@@ -55,7 +55,7 @@ class UserManager:
     def get_skey_by_pubkey(self, pubkey):
         return self.pkeykey[pubkey]
 
-    def user_access_ctrl(self, server_port, host, ipaddr, user='ss'):
+    def user_access_ctrl(self, server_port, host, ipaddr, user):
         # access control, called before each request
         # int server_port
         # str host: requested hostname
@@ -63,7 +63,7 @@ class UserManager:
         # raise ValueError if denied
         pass
 
-    def user_access_log(self, server_port, host, traffic, ipaddr, user='ss'):
+    def user_access_log(self, server_port, host, traffic, ipaddr, user):
         # log user access, called after each request
         # traffic: (upload, download) in bytes
         pass
