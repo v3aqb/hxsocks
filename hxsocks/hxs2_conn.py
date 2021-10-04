@@ -114,9 +114,8 @@ class Hxs2Connection():
                     break
                 except asyncio.TimeoutError:
                     timeout_count += 1
-                    # client should sent keep_alive chunk
                     if timeout_count > 10:
-                        # destroy connection
+                        # client should sent ping to keep_alive, destroy connection
                         self._logger.debug('read frame_len timed out.')
                         break
                     continue
@@ -203,6 +202,8 @@ class Hxs2Connection():
                                 self.log_access(stream_id)
                             else:
                                 self._logger.error('recv END_STREAM_FLAG, stream already closed.')
+                    else:
+                        self._logger.error('frame_type == HEADERS, wrong stream_id!')
                 elif frame_type == RST_STREAM:  # 3
                     self._stream_context[stream_id].stream_status = CLOSED
                     if stream_id in self._stream_writer:
@@ -263,7 +264,7 @@ class Hxs2Connection():
 
     def send_frame(self, type_, flags, stream_id, payload):
         self._logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
-        if type_ != 6:
+        if type_ != PING:
             self._last_active = time.time()
 
         try:
