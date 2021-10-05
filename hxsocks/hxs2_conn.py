@@ -62,6 +62,15 @@ class ForwardContext:
         self.traffic_from_client = 0
         self.traffic_from_remote = 0
 
+    def data_sent(self, data_len):
+        # sending data to hxs connection
+        self.traffic_from_remote += data_len
+        self.last_active = time.time()
+
+    def data_recv(self, data_len):
+        self.traffic_from_client += data_len
+        self.last_active = time.time()
+
 
 class Hxs2Connection():
     bufsize = 32768
@@ -164,8 +173,7 @@ class Hxs2Connection():
                     # sent data to stream
                     try:
                         self._stream_writer[stream_id].write(data)
-                        self._stream_context[stream_id].traffic_from_client += len(data)
-                        self._stream_context[stream_id].last_active = time.time()
+                        self._stream_context[stream_id].data_recv(len(data))
                         await self._stream_writer[stream_id].drain()
                     except OSError:
                         # remote closed, reset stream
@@ -285,7 +293,6 @@ class Hxs2Connection():
             fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
-                self._stream_context[stream_id].last_active = time.time()
             except asyncio.TimeoutError:
                 timeout_count += 1
                 if self._stream_context[stream_id].stream_status != OPEN:
@@ -316,7 +323,7 @@ class Hxs2Connection():
                     self.log_access(stream_id)
                 break
             if not self._stream_context[stream_id].stream_status & EOF_SENT:
-                self._stream_context[stream_id].traffic_from_remote += len(data)
+                self._stream_context[stream_id].data_sent(len(data))
                 payload = struct.pack('>H', len(data)) + data + bytes(random.randint(8, 255))
                 self.send_frame(DATA, 0, stream_id, payload)
         self._logger.debug('sid %s read_from_remote end. status %s',
