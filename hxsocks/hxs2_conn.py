@@ -52,8 +52,9 @@ END_STREAM_FLAG = 1
 
 
 class ForwardContext:
-    def __init__(self, host):
+    def __init__(self, host, logger):
         self.host = host
+        self.logger = logger
         self.last_active = time.time()
         # eof recieved
         self.stream_status = OPEN
@@ -62,14 +63,31 @@ class ForwardContext:
         self.traffic_from_client = 0
         self.traffic_from_remote = 0
 
+        self._sent_counter = 0
+        self._sent_rate = 0
+        # start monitor
+        asyncio.ensure_future(self.monitor())
+
     def data_sent(self, data_len):
         # sending data to hxs connection
         self.traffic_from_remote += data_len
         self.last_active = time.time()
+        self._sent_counter += 1
 
     def data_recv(self, data_len):
         self.traffic_from_client += data_len
         self.last_active = time.time()
+
+    def is_heavy(self):
+        return self._sent_counter and self._sent_rate > 10
+
+    async def monitor(self):
+        while self.stream_status is OPEN:
+            await asyncio.sleep(1)
+            self._sent_rate = 0.2 * self._sent_counter + self._sent_rate * 0.8
+            if self._sent_counter or self._sent_rate > 5:
+                self.logger.debug('%20s rate: %.2f, count %s', self.host, self._sent_rate, self._sent_counter)
+            self._sent_counter = 0
 
 
 class Hxs2Connection():
@@ -265,7 +283,7 @@ class Hxs2Connection():
             self.send_frame(HEADERS, OPEN, stream_id, data)
             # registor stream
             self._stream_writer[stream_id] = writer
-            self._stream_context[stream_id] = ForwardContext(host)
+            self._stream_context[stream_id] = ForwardContext(host, self._logger)
             # start forward from remote_reader to client_writer
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
@@ -323,6 +341,9 @@ class Hxs2Connection():
                     self.log_access(stream_id)
                 break
             if not self._stream_context[stream_id].stream_status & EOF_SENT:
+                if self._stream_context[stream_id].is_heavy():
+                    await asyncio.sleep(0)
+                    await self._client_writer.drain()
                 self._stream_context[stream_id].data_sent(len(data))
                 payload = struct.pack('>H', len(data)) + data + bytes(random.randint(8, 255))
                 self.send_frame(DATA, 0, stream_id, payload)
