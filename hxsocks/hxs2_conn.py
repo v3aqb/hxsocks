@@ -91,7 +91,7 @@ class ForwardContext:
 
 
 class Hxs2Connection():
-    bufsize = 32768
+    bufsize = 32768 - 22
 
     def __init__(self, reader, writer, user, skey, method, proxy, user_mgr, s_port, logger):
         self.__cipher = AEncryptor(skey, method, CTX)
@@ -345,7 +345,9 @@ class Hxs2Connection():
                     await asyncio.sleep(0)
                     await self._client_writer.drain()
                 self._stream_context[stream_id].data_sent(len(data))
-                payload = struct.pack('>H', len(data)) + data + bytes(random.randint(8, 255))
+                payload = struct.pack('>H', len(data)) + data
+                diff = self.bufsize - len(data)
+                payload += bytes(random.randint(min(diff, 8), min(diff, 255)))
                 self.send_frame(DATA, 0, stream_id, payload)
         self._logger.debug('sid %s read_from_remote end. status %s',
                            stream_id,
