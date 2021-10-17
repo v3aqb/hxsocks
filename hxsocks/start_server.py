@@ -19,6 +19,7 @@ def start_hxs_server(confpath):
     with open(confpath, 'r') as ymlfile:
         cfg = yaml.safe_load(ymlfile)
     servers = cfg['servers']
+    conn_limit = cfg.get('limit', 20)
     log_level = cfg.get('log_level', 20)
 
     udp_enable = cfg.get('udp_enable', False)
@@ -48,7 +49,7 @@ def start_hxs_server(confpath):
         sys.stderr.write('server cert not found, creating...\n')
         ECC(key_len=32).save(cert_path)
 
-    user_mgr = UserManager(cert_path)
+    user_mgr = UserManager(cert_path, conn_limit)
     cert = user_mgr.SERVER_CERT.get_pub_key()
     cert_hash = hashlib.sha256(cert).hexdigest()[:8]
     sys.stderr.write('load server cert %s\n' % cert_hash)

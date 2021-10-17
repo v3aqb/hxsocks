@@ -7,7 +7,7 @@ from hxcrypto import ECC, compare_digest
 
 
 class UserManager:
-    def __init__(self, server_cert, limit=10):
+    def __init__(self, server_cert, limit=20):
         '''server_cert: path to server_cert'''
         self.SERVER_CERT = ECC(from_file=server_cert)
         self._limit = limit
