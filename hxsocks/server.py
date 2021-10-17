@@ -235,7 +235,6 @@ class HXsocksHandler:
                                       client_writer,
                                       client,
                                       self.user_mgr.get_skey_by_pubkey(client_pkey),
-                                      self.server.method,
                                       self.server.proxy,
                                       self.user_mgr,
                                       self.address[1],

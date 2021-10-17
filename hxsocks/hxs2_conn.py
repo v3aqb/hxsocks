@@ -50,6 +50,13 @@ GOAWAY = 7
 PONG = 1
 END_STREAM_FLAG = 1
 
+HXS2_METHOD = [
+    'aes-128-gcm',
+    'aes-192-gcm',
+    'aes-256-gcm',
+    'chacha20-ietf-poly1305',
+]
+
 
 class ForwardContext:
     def __init__(self, host, logger):
@@ -93,8 +100,9 @@ class ForwardContext:
 class Hxs2Connection():
     bufsize = 32768 - 22
 
-    def __init__(self, reader, writer, user, skey, method, proxy, user_mgr, s_port, logger):
-        self.__cipher = AEncryptor(skey, method, CTX)
+    def __init__(self, reader, writer, user, skey, proxy, user_mgr, s_port, logger):
+        self.__cipher = None  # AEncryptor(skey, method, CTX)
+        self.__skey = skey
         self._client_reader = reader
         self._client_writer = writer
         self._client_address = writer.get_extra_info('peername')
@@ -153,11 +161,26 @@ class Hxs2Connection():
                 # read chunk_data
                 try:
                     fut = self._client_reader.readexactly(frame_len)
-                    # chunk size shoule be lower than 16kB
+                    # chunk size shoule be smaller than 32kB
                     frame_data = await asyncio.wait_for(fut, timeout=8)
-                    frame_data = self.__cipher.decrypt(frame_data)
+                    if self.__cipher:
+                        frame_data = self.__cipher.decrypt(frame_data)
+                    else:
+                        error = None
+                        for method in HXS2_METHOD:
+                            try:
+                                cipher = AEncryptor(self.__skey, method, CTX, check_iv=False)
+                                frame_data = cipher.decrypt(frame_data)
+                                self.__cipher = cipher
+                                self.__skey = None
+                                break
+                            except InvalidTag as err:
+                                error = err
+                                continue
+                        else:
+                            raise error
                 except (OSError, InvalidTag, asyncio.TimeoutError,
-                        asyncio.streams.IncompleteReadError) as err:
+                        asyncio.IncompleteReadError) as err:
                     # something went wrong...
                     self._logger.debug('read frame error: %r', err)
                     break
