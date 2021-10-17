@@ -32,14 +32,19 @@ class UserManager:
                     return user
         return None
 
-    def key_xchange(self, user, user_pkey, key_len):
+    def key_xchange(self, user, user_pkey):
         # return public_key, passwd_of_user
         if hashlib.md5(user_pkey).digest() in self.pkeyuser:
             raise ValueError('public key already registered. user: %s' % user)
         if len(self.userpkeys[user]) > self._limit:
             raise ValueError('connection limit exceeded. user: %s' % user)
-        ecc = ECC(key_len)
-        shared_secret = ecc.get_dh_key(user_pkey)
+        for key_len in (32, 24, 16):
+            try:
+                ecc = ECC(key_len)
+                shared_secret = ecc.get_dh_key(user_pkey)
+                break
+            except ValueError:
+                continue
         user_pkey_md5 = hashlib.md5(user_pkey).digest()
         self.userpkeys[user].append(user_pkey_md5)
         self.pkeyuser[user_pkey_md5] = user

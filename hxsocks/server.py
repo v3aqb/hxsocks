@@ -216,12 +216,18 @@ class HXsocksHandler:
                 await self.play_dead()
                 return
             try:
-                pkey, passwd = self.user_mgr.key_xchange(client, client_pkey, self.encryptor._key_len)
+                pkey, passwd = self.user_mgr.key_xchange(client, client_pkey)
                 self.logger.info('new key exchange. client: %s %s', client, self.client_address)
                 hash_ = hmac.new(passwd.encode(), client_pkey + pkey + client.encode(), hashlib.sha256).digest()
                 scert = self.user_mgr.SERVER_CERT.get_pub_key()
                 signature = self.user_mgr.SERVER_CERT.sign(hash_, DEFAULT_HASH)
-                data = bytes((0, len(pkey), len(scert), len(signature))) + pkey + hash_ + scert + signature + os.urandom(rint)
+                data = b''.join([
+                    bytes((0, len(pkey), len(scert), len(signature))),
+                    pkey,
+                    hash_,
+                    scert,
+                    signature,
+                    bytes(rint)])
                 _send(data)
 
                 client_pkey = hashlib.md5(client_pkey).digest()
