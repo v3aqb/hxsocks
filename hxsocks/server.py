@@ -38,7 +38,7 @@ from .hxs2_conn import Hxs2Connection
 from .util import open_connection, parse_hostport
 
 
-DEFAULT_METHOD = 'aes-128-cfb'
+DEFAULT_METHOD = 'chacha20-ietf-poly1305'
 DEFAULT_HASH = 'SHA256'
 MAC_LEN = 16
 CTX = b'hxsocks'
