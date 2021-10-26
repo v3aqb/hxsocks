@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 
-from .server import HandlerFactory, HXsocksHandler, ECC
-from .user_manager import UserManager
+from .server import HandlerFactory, HXsocksHandler
+from .user_manager import UserManager, ECC
 try:
     from .udp_relay import udp_relay_server
 except ImportError:
