@@ -3,6 +3,7 @@ hxsocks
 
 A better encrypted socks proxy.
 
+2021.11.7: disable shadowsocks by default
 2018.5.30: update key exchange method
 
 features
@@ -42,7 +43,7 @@ configure file example
     servers:
         - ss://aes-128-gcm:password@0.0.0.0:8138
         - ss://aes-128-cfb:password@0.0.0.0:8139
-        - hxs://0.0.0.0:8140/?method=aes-128-gcm&PSK=password&proxy=127.0.0.1:8120
+        - hxs://0.0.0.0:8140/?method=aes-128-gcm&PSK=password&proxy=127.0.0.1:8120&ss=1
     users:
         user: password
         user2: password2
