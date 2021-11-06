@@ -32,8 +32,8 @@ using `pip -U` may cause problems, better uninstall and install.
 
     pip3 uninstall hxsocks
     pip3 uninstall hxcrypto
-    pip3 install https://github.com/v3aqb/hxcrypto/archive/master.zip
-    pip3 install https://github.com/v3aqb/hxsocks/archive/master.zip
+    pip3 install https://github.com/v3aqb/hxcrypto/archive/master.zip --no-cache-dir
+    pip3 install https://github.com/v3aqb/hxsocks/archive/master.zip --no-cache-dir
 
 configure file example
 ----------------------
