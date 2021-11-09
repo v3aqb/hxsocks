@@ -191,10 +191,9 @@ class Hxs2Connection():
                 # +------+-------------------+----------+
                 # |  1   |   1   |     2     | Variable |
                 # +------+-------------------+----------+
-
-                header, payload = frame_data[:4], frame_data[4:]
+                frame_data = io.BytesIO(frame_data)
+                header = frame_data.read(4)
                 frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
-                payload = io.BytesIO(payload)
 
                 if frame_type != PING:
                     self._last_active = time.time()
@@ -202,8 +201,8 @@ class Hxs2Connection():
                 self._logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
                 if frame_type == DATA:  # 0
                     # first 2 bytes of payload indicates data_len
-                    data_len, = struct.unpack('>H', payload.read(2))
-                    data = payload.read(data_len)
+                    data_len, = struct.unpack('>H', frame_data.read(2))
+                    data = frame_data.read(data_len)
                     if len(data) != data_len:
                         # something went wrong, destory connection
                         self._logger.error('data_len mismatch')
@@ -228,9 +227,9 @@ class Hxs2Connection():
                         # open new stream
                         self._next_stream_id += 1
 
-                        host_len = payload.read(1)[0]
-                        host = payload.read(host_len).decode('ascii')
-                        port, = struct.unpack('>H', payload.read(2))
+                        host_len = frame_data.read(1)[0]
+                        host = frame_data.read(host_len).decode('ascii')
+                        port, = struct.unpack('>H', frame_data.read(2))
                         # rest of the payload is discarded
                         asyncio.ensure_future(self.create_connection(stream_id, host, port))
 
