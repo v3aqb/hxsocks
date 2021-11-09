@@ -99,11 +99,11 @@ class Server:
         asyncio.ensure_future(self._start())
 
     async def _start(self):
-        self.server = await asyncio.start_server(self.handle, self.address[0], self.address[1])
+        self.server = await asyncio.start_server(self.handle, self.address[0], self.address[1], limit=262144)
 
 
 class HXsocksHandler:
-    bufsize = 32768
+    bufsize = 65535
 
     def __init__(self, server):
         self.server = server
@@ -147,6 +147,7 @@ class HXsocksHandler:
         return _buf
 
     async def handle(self, client_reader, client_writer):
+        client_writer.transport.set_write_buffer_limits(262144, 131072)
         try:
             await self._handle(client_reader, client_writer)
         except Exception as err:
@@ -281,6 +282,7 @@ class HXsocksHandler:
 
         try:
             remote_reader, remote_writer = await open_connection(addr, port, self.server.proxy)
+            remote_writer.transport.set_write_buffer_limits(262144, 131072)
         except Exception as err:
             self.logger.error('connect to %s:%s failed! %r', addr, port, err)
             return

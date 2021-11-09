@@ -98,7 +98,7 @@ class ForwardContext:
 
 
 class Hxs2Connection():
-    bufsize = 32768 - 22
+    bufsize = 65535 - 22
 
     def __init__(self, reader, writer, user, skey, proxy, user_mgr, s_port, logger):
         self.__cipher = None  # AEncryptor(skey, method, CTX)
@@ -106,7 +106,7 @@ class Hxs2Connection():
         self._client_reader = reader
         self._client_writer = writer
         self._client_address = writer.get_extra_info('peername')
-        # self._client_writer.transport.set_write_buffer_limits(0, 0)
+        self._client_writer.transport.set_write_buffer_limits(524288, 262144)
         self._proxy = proxy
         self._s_port = s_port
         self._logger = logger
@@ -284,7 +284,7 @@ class Hxs2Connection():
         try:
             self.user_mgr.user_access_ctrl(self._s_port, host, self._client_address, self.user)
             reader, writer = await open_connection(host, port, self._proxy)
-            writer.transport.set_write_buffer_limits(0, 0)
+            writer.transport.set_write_buffer_limits(524288, 262144)
         except Exception as err:
             # tell client request failed.
             self._logger.error('connect %s:%s failed: %r', host, port, err)
@@ -302,11 +302,11 @@ class Hxs2Connection():
                 writer.close()
                 return
             data = bytes(random.randint(64, 256))
-            self.send_frame(HEADERS, OPEN, stream_id, data)
             # registor stream
             self._stream_writer[stream_id] = writer
             self._stream_context[stream_id] = ForwardContext(host, self._logger)
             # start forward from remote_reader to client_writer
+            self.send_frame(HEADERS, OPEN, stream_id, data)
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
@@ -344,12 +344,12 @@ class Hxs2Connection():
                 await asyncio.sleep(0)
         else:
             self.send_one_data_frame(stream_id, data)
+        await self._client_writer.drain()
 
     async def read_from_remote(self, stream_id, remote_reader):
         self._logger.debug('start read from stream')
         timeout_count = 0
         while not self._stream_context[stream_id].remote_status & EOF_RECV:
-            await self._client_writer.drain()
             fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
@@ -385,7 +385,6 @@ class Hxs2Connection():
             if not self._stream_context[stream_id].stream_status & EOF_SENT:
                 if self._stream_context[stream_id].is_heavy():
                     await asyncio.sleep(0)
-                    await self._client_writer.drain()
                 await self.send_data_frame(stream_id, data)
         self._logger.debug('sid %s read_from_remote end. status %s',
                            stream_id,
