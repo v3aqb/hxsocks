@@ -16,10 +16,6 @@ except ImportError:
 
 
 def start_hxs_server(confpath):
-    if sys.platform == 'win32':
-        loop = asyncio.ProactorEventLoop()
-        asyncio.set_event_loop(loop)
-
     with open(confpath, 'r') as ymlfile:
         cfg = yaml.safe_load(ymlfile)
     servers = cfg['servers']
