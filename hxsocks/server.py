@@ -155,6 +155,10 @@ class HXsocksHandler:
             self.logger.error(repr(err))
             self.logger.error(traceback.format_exc())
         client_writer.close()
+        try:
+            await client_writer.wait_closed()
+        except (ConnectionResetError, OSError):
+            pass
 
     async def _handle(self, client_reader, client_writer):
         self.client_address = client_writer.get_extra_info('peername')
@@ -227,7 +231,7 @@ class HXsocksHandler:
                                   self.user_mgr,
                                   self.address[1],
                                   self.logger)
-            await conn.wait_close()
+            await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)
             return
@@ -243,7 +247,7 @@ class HXsocksHandler:
             fut = self.client_reader.read(self.bufsize)
             try:
                 await asyncio.wait_for(fut, timeout)
-            except (asyncio.TimeoutError, ConnectionResetError):
+            except (asyncio.TimeoutError, OSError):
                 return
 
     async def handle_ss(self, client_writer, addr_type):
@@ -299,6 +303,7 @@ class HXsocksHandler:
             self.logger.error(repr(err))
             self.logger.error(traceback.format_exc())
         remote_writer.close()
+        await remote_writer.wait_closed()
 
         # access log
         traffic = (context.traffic_from_client, context.traffic_from_remote)
@@ -325,13 +330,13 @@ class HXsocksHandler:
             try:
                 write_to.write(data)
                 await write_to.drain()
-            except ConnectionResetError:
+            except OSError:
                 context.local_eof = True
                 return
         context.local_eof = True
         try:
             write_to.write_eof()
-        except (ConnectionResetError, OSError):
+        except OSError:
             pass
 
     async def ss_forward_b(self, read_from, write_to, cipher, context, timeout=60):
@@ -346,7 +351,7 @@ class HXsocksHandler:
                     data = b''
                 else:
                     continue
-            except (ConnectionResetError, OSError):
+            except OSError:
                 data = b''
 
             if not data:
@@ -358,7 +363,7 @@ class HXsocksHandler:
             try:
                 write_to.write(data)
                 await write_to.drain()
-            except ConnectionResetError:
+            except OSError:
                 context.remote_eof = True
                 return
         context.remote_eof = True
