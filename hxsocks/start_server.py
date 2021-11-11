@@ -22,6 +22,8 @@ def start_hxs_server(confpath):
     conn_limit = cfg.get('limit', 20)
     log_level = cfg.get('log_level', 20)
 
+    tcp_nodelay = cfg.get('tcp_nodelay', False)
+
     udp_enable = cfg.get('udp_enable', False)
     if udp_enable and not udp_relay_server:
         sys.stderr.write('asyncio_dgram not found? disable udp\n')
@@ -67,7 +69,7 @@ def start_hxs_server(confpath):
 
     server_list = []
     for server in servers:
-        server_ = Server(HXsocksHandler, server, user_mgr, log_level)
+        server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay)
         server_.start()
         server_list.append(server_)
         if udp_enable:

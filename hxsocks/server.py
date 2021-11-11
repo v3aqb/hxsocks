@@ -54,10 +54,11 @@ class ForwardContext:
 
 
 class Server:
-    def __init__(self, handler_class, serverinfo, user_mgr, log_level):
+    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay):
         self._handler_class = handler_class
         self.user_mgr = user_mgr
         self.server = None
+        self.tcp_nodelay = tcp_nodelay
 
         self.serverinfo = serverinfo
         parse = urllib.parse.urlparse(serverinfo)
@@ -99,7 +100,10 @@ class Server:
         asyncio.ensure_future(self._start())
 
     async def _start(self):
-        self.server = await asyncio.start_server(self.handle, self.address[0], self.address[1], limit=262144)
+        self.server = await asyncio.start_server(self.handle,
+                                                 self.address[0],
+                                                 self.address[1],
+                                                 limit=262144)
 
 
 class HXsocksHandler:
@@ -148,6 +152,9 @@ class HXsocksHandler:
 
     async def handle(self, client_reader, client_writer):
         client_writer.transport.set_write_buffer_limits(262144, 131072)
+        if self.server.tcp_nodelay:
+            soc = client_writer.transport.get_extra_info('socket')
+            soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         try:
             await self._handle(client_reader, client_writer)
         except Exception as err:
@@ -230,7 +237,8 @@ class HXsocksHandler:
                                   self.server.proxy,
                                   self.user_mgr,
                                   self.address[1],
-                                  self.logger)
+                                  self.logger,
+                                  self.server.tcp_nodelay)
             await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)
@@ -285,7 +293,10 @@ class HXsocksHandler:
         self.logger.info('connect to %s:%d %r', addr, port, self.client_address)
 
         try:
-            remote_reader, remote_writer = await open_connection(addr, port, self.server.proxy)
+            remote_reader, remote_writer = await open_connection(addr,
+                                                                 port,
+                                                                 self.server.proxy,
+                                                                 self.server.tcp_nodelay)
             remote_writer.transport.set_write_buffer_limits(262144, 131072)
         except Exception as err:
             self.logger.error('connect to %s:%s failed! %r', addr, port, err)

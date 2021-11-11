@@ -100,7 +100,7 @@ class ForwardContext:
 class Hxs2Connection():
     bufsize = 65535 - 22
 
-    def __init__(self, reader, writer, user, skey, proxy, user_mgr, s_port, logger):
+    def __init__(self, reader, writer, user, skey, proxy, user_mgr, s_port, logger, tcp_nodelay):
         self.__cipher = None  # AEncryptor(skey, method, CTX)
         self.__skey = skey
         self._client_reader = reader
@@ -110,6 +110,7 @@ class Hxs2Connection():
         self._proxy = proxy
         self._s_port = s_port
         self._logger = logger
+        self._tcp_nodelay = tcp_nodelay
         self.user = user
         self.user_mgr = user_mgr
         self._connection_lost = False
@@ -282,7 +283,7 @@ class Hxs2Connection():
 
         try:
             self.user_mgr.user_access_ctrl(self._s_port, host, self._client_address, self.user)
-            reader, writer = await open_connection(host, port, self._proxy)
+            reader, writer = await open_connection(host, port, self._proxy, self._tcp_nodelay)
             writer.transport.set_write_buffer_limits(524288, 262144)
         except (OSError, asyncio.TimeoutError) as err:
             # tell client request failed.
