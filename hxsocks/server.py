@@ -161,7 +161,8 @@ class HXsocksHandler:
             self.logger.error('HXsocksHandler.handle')
             self.logger.error(repr(err))
             self.logger.error(traceback.format_exc())
-        client_writer.close()
+        if not client_writer.is_closing():
+            client_writer.close()
         try:
             await client_writer.wait_closed()
         except (ConnectionResetError, OSError):
@@ -313,12 +314,16 @@ class HXsocksHandler:
         except Exception as err:
             self.logger.error(repr(err))
             self.logger.error(traceback.format_exc())
-        remote_writer.close()
-        await remote_writer.wait_closed()
 
         # access log
         traffic = (context.traffic_from_client, context.traffic_from_remote)
         self.user_mgr.user_access_log(self.address[1], addr, traffic, self.client_address, self.__key)
+        if not remote_writer.is_closing():
+            remote_writer.close()
+        try:
+            await remote_writer.wait_closed()
+        except OSError:
+            pass
 
     async def ss_forward_a(self, write_to, context, timeout=60):
         # data from ss client, decrypt, sent to remote
