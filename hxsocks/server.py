@@ -306,8 +306,11 @@ class HXsocksHandler:
         # forward
         context = ForwardContext()
 
-        tasks = [self.ss_forward_a(remote_writer, context),
-                 self.ss_forward_b(remote_reader, client_writer, self.encryptor.encrypt, context),
+        tasks = [asyncio.create_task(self.ss_forward_a(remote_writer, context)),
+                 asyncio.create_task(self.ss_forward_b(remote_reader,
+                                                       client_writer,
+                                                       self.encryptor.encrypt,
+                                                       context)),
                  ]
         try:
             await asyncio.wait(tasks)
