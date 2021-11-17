@@ -352,10 +352,7 @@ class Hxs2Connection():
             except ConnectionError:
                 await self.close_stream(stream_id)
                 break
-            except (asyncio.TimeoutError, OSError) as err:
-                # OSError: [WinError 121]
-                if isinstance(err, OSError) and err.args[0] != 121:
-                    raise
+            except asyncio.TimeoutError:
                 if time.monotonic() - self._stream_context[stream_id].last_active < 120 and \
                         self._stream_context[stream_id].stream_status == OPEN:
                     continue
@@ -400,7 +397,7 @@ class Hxs2Connection():
                 self._stream_writer[stream_id].close()
             try:
                 await self._stream_writer[stream_id].wait_closed()
-            except ConnectionError:
+            except OSError:
                 pass
             del self._stream_writer[stream_id]
             self.log_access(stream_id)

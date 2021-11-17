@@ -347,7 +347,7 @@ class HXsocksHandler:
         context.local_eof = True
         try:
             write_to.write_eof()
-        except ConnectionError:
+        except OSError:
             pass
 
     async def ss_forward_b(self, read_from, write_to, cipher, context, timeout=60):
