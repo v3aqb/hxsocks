@@ -428,8 +428,7 @@ class Hxs2Connection():
         if self._settings_async_drain:
             asyncio.ensure_future(self.async_drain(stream_id))
         else:
-            with self._stream_context[stream_id].drain_lock:
-                await self._stream_writer[stream_id].drain()
+            await self._stream_writer[stream_id].drain()
 
     async def async_drain(self, stream_id):
         wbuffer_size = self._stream_writer[stream_id].transport.get_write_buffer_size()
