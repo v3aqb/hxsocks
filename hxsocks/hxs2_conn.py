@@ -106,7 +106,7 @@ class ForwardContext:
 class Hxs2Connection():
     bufsize = 65535 - 22
 
-    def __init__(self, reader, writer, user, skey, proxy, user_mgr, s_port, logger, tcp_nodelay):
+    def __init__(self, reader, writer, user, skey, proxy, user_mgr, s_port, logger, tcp_nodelay, timeout):
         self.__cipher = None  # AEncryptor(skey, method, CTX)
         self.__skey = skey
         self._client_reader = reader
@@ -119,6 +119,7 @@ class Hxs2Connection():
         self._s_port = s_port
         self._logger = logger
         self._tcp_nodelay = tcp_nodelay
+        self.timeout = timeout
         self.user = user
         self.user_mgr = user_mgr
         self._connection_lost = False
@@ -143,7 +144,7 @@ class Hxs2Connection():
                 if self._gone and not self._stream_writer:
                     break
 
-                if time.monotonic() - self._last_active > 300:
+                if time.monotonic() - self._last_active > self.timeout * 2:
                     break
 
                 # read frame_len
@@ -366,12 +367,12 @@ class Hxs2Connection():
             await self._stream_context[stream_id].resume_reading.wait()
             fut = remote_reader.read(self.bufsize)
             try:
-                data = await asyncio.wait_for(fut, timeout=12)
+                data = await asyncio.wait_for(fut, timeout=6)
             except ConnectionError:
                 await self.close_stream(stream_id)
                 break
             except asyncio.TimeoutError:
-                if time.monotonic() - self._stream_context[stream_id].last_active < 120 and \
+                if time.monotonic() - self._stream_context[stream_id].last_active < self.timeout and \
                         self._stream_context[stream_id].stream_status == OPEN:
                     continue
                 data = b''

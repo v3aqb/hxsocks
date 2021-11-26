@@ -54,11 +54,12 @@ class ForwardContext:
 
 
 class Server:
-    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay):
+    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay=False, timeout=180):
         self._handler_class = handler_class
         self.user_mgr = user_mgr
         self.server = None
         self.tcp_nodelay = tcp_nodelay
+        self.timeout = timeout
 
         self.serverinfo = serverinfo
         parse = urllib.parse.urlparse(serverinfo)
@@ -114,6 +115,7 @@ class HXsocksHandler:
         self.logger = server.logger
         self.user_mgr = self.server.user_mgr
         self.address = self.server.address
+        self.timeout = self.server.timeout
 
         self.encryptor = Encryptor(self.server.psk, self.server.method)
         self.__key = self.server.psk
@@ -236,7 +238,8 @@ class HXsocksHandler:
                                   self.user_mgr,
                                   self.address[1],
                                   self.logger,
-                                  self.server.tcp_nodelay)
+                                  self.server.tcp_nodelay,
+                                  self.timeout)
             await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)
@@ -262,7 +265,6 @@ class HXsocksHandler:
         if not self.server.ss_enable:
             return True
         try:
-            assert addr_type in (1, 3, 4)
             if addr_type == 1:
                 addr = await self.read(4)
                 addr = socket.inet_ntoa(addr)
@@ -270,9 +272,11 @@ class HXsocksHandler:
                 data = await self.read(1)
                 addr = await self.read(data[0])
                 addr = addr.decode('ascii')
-            else:
+            elif addr_type == 4:
                 data = await self.read(16)
                 addr = socket.inet_ntop(socket.AF_INET6, data)
+            else:
+                raise ValueError('bad addr_type')
             port = await self.read(2)
             port, = struct.unpack('>H', port)
         except Exception as err:
@@ -320,15 +324,15 @@ class HXsocksHandler:
         except ConnectionError:
             pass
 
-    async def ss_forward_a(self, write_to, context, timeout=60):
+    async def ss_forward_a(self, write_to, context):
         # data from ss client, decrypt, sent to remote
         while True:
             try:
                 fut = self.read()
-                data = await asyncio.wait_for(fut, timeout=5)
+                data = await asyncio.wait_for(fut, timeout=6)
                 context.last_active = time.time()
             except asyncio.TimeoutError:
-                if time.time() - context.last_active > timeout or context.remote_eof:
+                if time.time() - context.last_active > self.timeout or context.remote_eof:
                     data = b''
                 else:
                     continue
@@ -350,15 +354,15 @@ class HXsocksHandler:
         except OSError:
             pass
 
-    async def ss_forward_b(self, read_from, write_to, cipher, context, timeout=60):
+    async def ss_forward_b(self, read_from, write_to, cipher, context):
         # data from remote, encrypt, sent to client
         while True:
             try:
                 fut = read_from.read(self.bufsize)
-                data = await asyncio.wait_for(fut, timeout=5)
+                data = await asyncio.wait_for(fut, timeout=6)
                 context.last_active = time.time()
             except asyncio.TimeoutError:
-                if time.time() - context.last_active > timeout or context.local_eof:
+                if time.time() - context.last_active > self.timeout or context.local_eof:
                     data = b''
                 else:
                     continue

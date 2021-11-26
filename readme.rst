@@ -48,9 +48,10 @@ configure file example
         user: password
         user2: password2
     tcp_nodelay: false
+	udp_timeout: 180
     udp_enable: false   # boolean, port_number, or list of port enabled [8138, 8139]
     udp_mode: 2         # 0 for fullcone, 1 for restricted, 2 for port_restricted
-    udp_timeout: 60
+    udp_timeout: 180
     log_level: 20
 
 run

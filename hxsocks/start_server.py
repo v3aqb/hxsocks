@@ -23,6 +23,9 @@ def start_hxs_server(confpath):
     log_level = cfg.get('log_level', 20)
 
     tcp_nodelay = cfg.get('tcp_nodelay', False)
+    tcp_timeout = cfg.get('tcp_timeout', 180)
+    if not isinstance(tcp_timeout, int):
+        tcp_timeout = 180
 
     udp_enable = cfg.get('udp_enable', False)
     if udp_enable and not udp_relay_server:
@@ -38,9 +41,9 @@ def start_hxs_server(confpath):
         else:
             udp_enable = True
 
-    udp_timeout = cfg.get('udp_timeout', 60)
+    udp_timeout = cfg.get('udp_timeout', 180)
     if not isinstance(udp_timeout, int):
-        udp_timeout = 60
+        udp_timeout = 180
 
     udp_mode = cfg.get('udp_mode', 2)
     # 0 for fullcone, 1 for restricted, 2 for port_restricted
@@ -69,7 +72,7 @@ def start_hxs_server(confpath):
 
     server_list = []
     for server in servers:
-        server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay)
+        server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout)
         server_.start()
         server_list.append(server_)
         if udp_enable:
