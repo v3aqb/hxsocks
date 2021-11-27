@@ -8,7 +8,7 @@ import logging
 import asyncio
 import asyncio_dgram
 
-from hxcrypto import Encryptor
+from hxcrypto import Encryptor, InvalidTag, IVError
 
 
 FULL = 0
@@ -23,8 +23,8 @@ class udp_relay:
         self.timeout = timeout
         self.mode = mode
         self.remote_stream = None
-        self.remote_lastactive = {}
-        self._last_active = time.time()
+        self.remote_addr = set()
+        self._last_active = time.monotonic()
         self._stop = False
         self._recv_task = None
 
@@ -32,17 +32,17 @@ class udp_relay:
         if not self.remote_stream:
             self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
             self._recv_task = asyncio.ensure_future(self.recv_from_remote())
-        self._last_active = time.time()
+        self._last_active = time.monotonic()
         if self.mode:
             key = remote_addr[0] if self.mode == 1 else remote_addr
-            self.remote_lastactive[key] = time.time()
+            self.remote_addr.add(key)
         await self.remote_stream.send(dgram, remote_addr)
 
     async def recv_from_remote(self):
         while not self._stop:
             try:
                 fut = self.remote_stream.recv()
-                data, remote_addr = await asyncio.wait_for(fut, timeout=5)
+                data, remote_addr = await asyncio.wait_for(fut, timeout=6)
             except asyncio.TimeoutError:
                 if time.time() - self._last_active > self.timeout:
                     break
@@ -50,30 +50,16 @@ class udp_relay:
             except OSError:
                 break
 
-            if self.firewall(remote_addr):
-                self.parent.logger.info('udp drop %r', remote_addr)
-                continue
-
-            self._last_active = time.time()
             if self.mode:
                 key = remote_addr[0] if self.mode == 1 else remote_addr
-                self.remote_lastactive[key] = time.time()
+                if key not in self.remote_addr:
+                    self.parent.logger.info('udp drop %r', remote_addr)
+                    continue
+
+            self._last_active = time.monotonic()
             await self.parent.on_remote_recv(self.client_addr, remote_addr, data, None)
         self.remote_stream.close()
         self.parent.on_relay_timeout(self.client_addr)
-
-    def firewall(self, remote_addr):
-        '''
-            dgram received from remote_addr
-            return True if dgram should be droped.
-        '''
-        if self.mode:
-            key = remote_addr[0] if self.mode == 1 else remote_addr
-            if key not in self.remote_lastactive:
-                return True
-            if time.time() - self.remote_lastactive[key] > self.timeout:
-                del self.remote_lastactive[key]
-                return True
 
     def stop(self):
         self._stop = True
@@ -113,16 +99,17 @@ class udp_relay_server:
     async def handle(self, client_addr, data):
         try:
             remote_addr, dgram, data = self.decrypt_parse(data)
-        except Exception as err:
+        except (InvalidTag, IVError) as err:
             self.logger.error('%s %s', repr(err), repr(client_addr))
-        else:
-            self.logger.debug('on_server_recv, %r, %r', client_addr, remote_addr)
-            remote_ip = ipaddress.ip_address(remote_addr[0])
-            if remote_ip.is_private:
-                self.logger.warning('on_server_recv, %r, %r, is_private', client_addr, remote_addr)
-                return
-            relay = self.get_relay(client_addr)
-            await relay.send(dgram, remote_addr, data)
+            return
+
+        self.logger.debug('on_server_recv, %r, %r', client_addr, remote_addr)
+        remote_ip = ipaddress.ip_address(remote_addr[0])
+        if remote_ip.is_private:
+            self.logger.warning('on_server_recv, %r, %r, is_private', client_addr, remote_addr)
+            return
+        relay = self.get_relay(client_addr)
+        await relay.send(dgram, remote_addr, data)
 
     async def on_remote_recv(self, client_addr, remote_addr, dgram, data):
         '''
@@ -143,7 +130,6 @@ class udp_relay_server:
 
     def on_relay_timeout(self, client_addr):
         if client_addr in self.relay_holder:
-            self.relay_holder[client_addr].stop()
             del self.relay_holder[client_addr]
 
     def decrypt_parse(self, data):
