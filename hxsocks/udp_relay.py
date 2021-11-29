@@ -25,7 +25,7 @@ class udp_relay:
         self.remote_stream = None
         self.remote_addr = set()
         self._last_active = time.monotonic()
-        self._stop = False
+        self._close = False
         self._recv_task = None
 
     async def send(self, dgram, remote_addr, data):
@@ -39,7 +39,7 @@ class udp_relay:
         await self.remote_stream.send(dgram, remote_addr)
 
     async def recv_from_remote(self):
-        while not self._stop:
+        while not self._close:
             try:
                 fut = self.remote_stream.recv()
                 data, remote_addr = await asyncio.wait_for(fut, timeout=6)
@@ -61,8 +61,8 @@ class udp_relay:
         self.remote_stream.close()
         self.parent.on_relay_timeout(self.client_addr)
 
-    def stop(self):
-        self._stop = True
+    def close(self):
+        self._close = True
 
 
 class udp_relay_server:
@@ -115,6 +115,8 @@ class udp_relay_server:
         '''
             create dgram, encrypt and send to client
         '''
+        if client_addr not in self.relay_holder:
+            return
         self.logger.debug('on_remote_recv %r, %r', remote_addr, client_addr)
         if data:
             buf = data
@@ -130,6 +132,7 @@ class udp_relay_server:
 
     def on_relay_timeout(self, client_addr):
         if client_addr in self.relay_holder:
+            self.relay_holder[client_addr].close()
             del self.relay_holder[client_addr]
 
     def decrypt_parse(self, data):
