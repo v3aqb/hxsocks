@@ -10,9 +10,9 @@ import yaml
 from .server import Server, HXsocksHandler
 from .user_manager import UserManager, ECC
 try:
-    from .udp_relay import udp_relay_server
+    from .udp_relay import UDPRelayServer
 except ImportError:
-    udp_relay_server = None
+    UDPRelayServer = None
 
 
 def start_hxs_server(confpath):
@@ -28,7 +28,7 @@ def start_hxs_server(confpath):
         tcp_timeout = 600
 
     udp_enable = cfg.get('udp_enable', False)
-    if udp_enable and not udp_relay_server:
+    if udp_enable and not UDPRelayServer:
         sys.stderr.write('asyncio_dgram not found? disable udp\n')
         udp_enable = False
     # boolean, port_number, [list of ports]
@@ -78,7 +78,7 @@ def start_hxs_server(confpath):
         if udp_enable:
             if isinstance(udp_enable, list) and server_.address[1] not in udp_enable:
                 continue
-            udp_server = udp_relay_server(server_.address, server_.method, server_.psk, udp_timeout, udp_mode)
+            udp_server = UDPRelayServer(server_.address, server_.method, server_.psk, udp_timeout, udp_mode)
             udp_server.start()
             server_list.append(udp_server)
 

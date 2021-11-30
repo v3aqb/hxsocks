@@ -16,7 +16,7 @@ RESTRICTED = 1
 PORTRESTRICTED = 2
 
 
-class udp_relay:
+class UDPRelay:
     def __init__(self, parent, client_addr, timeout=60, mode=PORTRESTRICTED):
         self.parent = parent
         self.client_addr = client_addr
@@ -65,7 +65,7 @@ class udp_relay:
         self._close = True
 
 
-class udp_relay_server:
+class UDPRelayServer:
     '''
     provide udp relay for shadowsocks
     '''
@@ -165,6 +165,6 @@ class udp_relay_server:
         '''
         if client_addr not in self.relay_holder:
             self.logger.debug('start udp_relay %r', client_addr)
-            relay = udp_relay(self, client_addr, self.timeout, self.mode)
+            relay = UDPRelay(self, client_addr, self.timeout, self.mode)
             self.relay_holder[client_addr] = relay
         return self.relay_holder[client_addr]
