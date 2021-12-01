@@ -24,14 +24,16 @@ class UDPRelay:
         self.mode = mode
         self.remote_stream = None
         self.remote_addr = set()
+        self.lock = asyncio.Lock()
         self._last_active = time.monotonic()
         self._close = False
         self._recv_task = None
 
     async def send(self, dgram, remote_addr, data):
-        if not self.remote_stream:
-            self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
-            self._recv_task = asyncio.ensure_future(self.recv_from_remote())
+        async with self.lock:
+            if not self.remote_stream:
+                self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
+                self._recv_task = asyncio.ensure_future(self.recv_from_remote())
         self._last_active = time.monotonic()
         if self.mode:
             key = remote_addr[0] if self.mode == 1 else remote_addr
