@@ -2,8 +2,6 @@
 import os
 import sys
 import hashlib
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
 
 import yaml
 
@@ -66,9 +64,6 @@ def start_hxs_server(confpath):
     if cfg['users']:
         for user, passwd in cfg['users'].items():
             user_mgr.add_user(user, passwd)
-
-    loop = asyncio.get_event_loop()
-    loop.set_default_executor(ThreadPoolExecutor(20))
 
     server_list = []
     for server in servers:
