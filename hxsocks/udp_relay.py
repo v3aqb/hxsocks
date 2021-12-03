@@ -29,22 +29,42 @@ class UDPRelay:
         self._close = False
         self._recv_task = None
 
-    async def send(self, dgram, remote_addr, data):
+    async def send(self, data):
         async with self.lock:
             if not self.remote_stream:
                 self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
                 self._recv_task = asyncio.ensure_future(self.recv_from_remote())
+        data_io = io.BytesIO(data)
+        addrtype = data_io.read(1)[0]
+        if addrtype == 1:
+            addr = data_io.read(4)
+            addr = socket.inet_ntoa(addr)
+        elif addrtype == 3:
+            addr = data_io.read(1)
+            addr = data_io.read(addr[0])
+            addr = addr.decode('ascii')
+        else:
+            addr = data_io.read(16)
+            addr = socket.inet_ntop(socket.AF_INET6, addr)
+        port = data_io.read(2)
+        port, = struct.unpack('>H', port)
+
+        dgram = data_io.read()
+        remote_ip = ipaddress.ip_address(addr)
+        if remote_ip.is_private:
+            self.parent.logger.warning('on_server_recv, %r, %r, is_private', self.client_addr, addr)
+            return
         self._last_active = time.monotonic()
         if self.mode:
-            key = remote_addr[0] if self.mode == 1 else remote_addr
+            key = addr if self.mode == 1 else (addr, port)
             self.remote_addr.add(key)
-        await self.remote_stream.send(dgram, remote_addr)
+        await self.remote_stream.send(dgram, (addr, port))
 
     async def recv_from_remote(self):
         while not self._close:
             try:
                 fut = self.remote_stream.recv()
-                data, remote_addr = await asyncio.wait_for(fut, timeout=6)
+                dgram, remote_addr = await asyncio.wait_for(fut, timeout=6)
             except asyncio.TimeoutError:
                 if time.time() - self._last_active > self.timeout:
                     break
@@ -59,7 +79,12 @@ class UDPRelay:
                     continue
 
             self._last_active = time.monotonic()
-            await self.parent.on_remote_recv(self.client_addr, remote_addr, data, None)
+            remote_ip = ipaddress.ip_address(remote_addr[0])
+            buf = b'\x01' if remote_ip.version == 4 else b'\x04'
+            buf += remote_ip.packed
+            buf += struct.pack(b'>H', remote_addr[1])
+            buf += dgram
+            await self.parent.on_remote_recv(self.client_addr, buf)
         self.remote_stream.close()
         self.parent.on_relay_timeout(self.client_addr)
 
@@ -100,36 +125,25 @@ class UDPRelayServer:
 
     async def handle(self, client_addr, data):
         try:
-            remote_addr, dgram, data = self.decrypt_parse(data)
+            data = self.decrypt(data)
         except (InvalidTag, IVError) as err:
             self.logger.error('%s %s', repr(err), repr(client_addr))
             return
 
-        self.logger.debug('on_server_recv, %r, %r', client_addr, remote_addr)
-        remote_ip = ipaddress.ip_address(remote_addr[0])
-        if remote_ip.is_private:
-            self.logger.warning('on_server_recv, %r, %r, is_private', client_addr, remote_addr)
-            return
+        self.logger.debug('on_server_recv, %r', client_addr)
         relay = self.get_relay(client_addr)
-        await relay.send(dgram, remote_addr, data)
+        await relay.send(data)
 
-    async def on_remote_recv(self, client_addr, remote_addr, dgram, data):
+    async def on_remote_recv(self, client_addr, data):
         '''
             create dgram, encrypt and send to client
         '''
         if client_addr not in self.relay_holder:
             return
-        self.logger.debug('on_remote_recv %r, %r', remote_addr, client_addr)
-        if data:
-            buf = data
-        else:
-            remote_ip = ipaddress.ip_address(remote_addr[0])
-            buf = b'\x01' if remote_ip.version == 4 else b'\x04'
-            buf += remote_ip.packed
-            buf += struct.pack(b'>H', remote_addr[1])
-            buf += dgram
+        self.logger.debug('on_remote_recv %r', client_addr)
+
         cipher = Encryptor(self.__key, self.method)
-        buf = cipher.encrypt_once(buf)
+        buf = cipher.encrypt_once(data)
         await self.server_stream.send(buf, client_addr)
 
     def on_relay_timeout(self, client_addr):
@@ -137,27 +151,10 @@ class UDPRelayServer:
             self.relay_holder[client_addr].close()
             del self.relay_holder[client_addr]
 
-    def decrypt_parse(self, data):
+    def decrypt(self, data):
         cipher = Encryptor(self.__key, self.method)
         data = cipher.decrypt(data)
-
-        data = io.BytesIO(data)
-        addrtype = data.read(1)[0]
-        if addrtype == 1:
-            addr = data.read(4)
-            addr = socket.inet_ntoa(addr)
-        elif addrtype == 3:
-            addr = data.read(1)
-            addr = data.read(addr[0])
-            addr = addr.decode('ascii')
-        else:
-            addr = data.read(16)
-            addr = socket.inet_ntop(socket.AF_INET6, addr)
-        port = data.read(2)
-        port, = struct.unpack('>H', port)
-
-        dgram = data.read()
-        return (addr, port), dgram, data
+        return data
 
     def get_relay(self, client_addr):
         '''
