@@ -66,7 +66,7 @@ class UDPRelay:
                 fut = self.remote_stream.recv()
                 dgram, remote_addr = await asyncio.wait_for(fut, timeout=6)
             except asyncio.TimeoutError:
-                if time.time() - self._last_active > self.timeout:
+                if time.monotonic() - self._last_active > self.timeout:
                     break
                 continue
             except OSError:
@@ -86,10 +86,19 @@ class UDPRelay:
             buf += dgram
             await self.parent.on_remote_recv(self.client_addr, buf)
         self.remote_stream.close()
-        self.parent.on_relay_timeout(self.client_addr)
+        self.parent.close_relay(self.client_addr)
 
     def close(self):
         self._close = True
+
+    def is_closing(self):
+        return self._close
+
+    async def drain(self):
+        return
+
+    async def wait_closed(self):
+        return
 
 
 class UDPRelayServer:
@@ -131,7 +140,7 @@ class UDPRelayServer:
             return
 
         self.logger.debug('on_server_recv, %r', client_addr)
-        relay = self.get_relay(client_addr)
+        relay = await self.get_relay(client_addr)
         await relay.send(data)
 
     async def on_remote_recv(self, client_addr, data):
@@ -146,7 +155,7 @@ class UDPRelayServer:
         buf = cipher.encrypt_once(data)
         await self.server_stream.send(buf, client_addr)
 
-    def on_relay_timeout(self, client_addr):
+    def close_relay(self, client_addr):
         if client_addr in self.relay_holder:
             self.relay_holder[client_addr].close()
             del self.relay_holder[client_addr]
@@ -156,7 +165,7 @@ class UDPRelayServer:
         data = cipher.decrypt(data)
         return data
 
-    def get_relay(self, client_addr):
+    async def get_relay(self, client_addr):
         '''
             for each client_addr, create a ctx and udp stream
             start udp recv, store udp stream in ctx

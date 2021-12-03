@@ -236,7 +236,7 @@ class HXsocksHandler:
                                   shared_secret,
                                   self.server.proxy,
                                   self.user_mgr,
-                                  self.address[1],
+                                  self.address,
                                   self.logger,
                                   self.server.tcp_nodelay,
                                   self.timeout)
