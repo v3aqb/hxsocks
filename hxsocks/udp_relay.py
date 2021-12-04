@@ -19,6 +19,7 @@ PORTRESTRICTED = 2
 class UDPRelay:
     def __init__(self, parent, client_addr, timeout=60, mode=PORTRESTRICTED):
         self.parent = parent
+        self.logger = self.parent.logger
         self.client_addr = client_addr
         self.timeout = timeout
         self.mode = mode
@@ -52,13 +53,16 @@ class UDPRelay:
         dgram = data_io.read()
         remote_ip = ipaddress.ip_address(addr)
         if remote_ip.is_private:
-            self.parent.logger.warning('on_server_recv, %r, %r, is_private', self.client_addr, addr)
+            self.logger.warning('on_server_recv, %r, %r, is_private', self.client_addr, addr)
             return
         self._last_active = time.monotonic()
         if self.mode:
             key = addr if self.mode == 1 else (addr, port)
             self.remote_addr.add(key)
-        await self.remote_stream.send(dgram, (addr, port))
+        try:
+            await self.remote_stream.send(dgram, (addr, port))
+        except OSError:
+            self.logger.info('udp send fail. %s:%d', addr, port)
 
     async def recv_from_remote(self):
         while not self._close:
@@ -75,7 +79,7 @@ class UDPRelay:
             if self.mode:
                 key = remote_addr[0] if self.mode == 1 else remote_addr
                 if key not in self.remote_addr:
-                    self.parent.logger.info('udp drop %r', remote_addr)
+                    self.logger.info('udp drop %r', remote_addr)
                     continue
 
             self._last_active = time.monotonic()
