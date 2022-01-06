@@ -250,13 +250,16 @@ class HXsocksHandler:
         await self.play_dead()
         return
 
-    async def play_dead(self, timeout=1):
-        count = random.randint(6, 15)
+    async def play_dead(self):
+        count = random.randint(12, 30)
         for _ in range(count):
+            timeout = random.random()
             fut = self.client_reader.read(self.bufsize)
             try:
                 await asyncio.wait_for(fut, timeout)
-            except (asyncio.TimeoutError, ConnectionError):
+            except asyncio.TimeoutError:
+                continue
+            except OSError:
                 return
 
     async def handle_ss(self, client_writer, addr_type):
