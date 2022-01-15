@@ -240,9 +240,11 @@ class HXsocksHandler:
                                   self.logger,
                                   self.server.tcp_nodelay,
                                   self.timeout)
-            await conn.handle_connection()
+            result = await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)
+            if result:
+                await self.play_dead()
             return
 
         # TODO: security log

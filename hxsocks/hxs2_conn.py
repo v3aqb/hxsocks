@@ -305,6 +305,7 @@ class Hxs2Connection():
         task_list = [asyncio.create_task(w.wait_closed()) for w in task_list]
         if task_list:
             await asyncio.wait(task_list)
+        return self._next_stream_id == 1
 
     async def create_connection(self, stream_id, host, port):
         self.logger.info('connecting %s:%s %s %s', host, port, self.user, self._client_address)
