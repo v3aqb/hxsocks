@@ -14,6 +14,7 @@ features
 - perfect forward security
 - connection multiplexing
 - some MITM attack protection
+- udp relay (over tcp, full cone)
 
 install
 -------
