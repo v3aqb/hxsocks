@@ -21,6 +21,7 @@
 import re
 import asyncio
 import socket
+import struct
 import ipaddress
 
 
@@ -48,6 +49,30 @@ async def request_is_loopback(addr):
     return None
 
 
+async def connect_socks5(addr, port, proxy):
+    fut = asyncio.open_connection(proxy[0], proxy[1], limit=131072)
+    remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=2)
+    remote_writer.write(b"\x05\x01\x00")
+    data = await remote_reader.readexactly(2)
+    assert data[1] == 0  # no auth needed or auth passed
+    remote_writer.write(b''.join([b"\x05\x01\x00\x03",
+                                  chr(len(addr)).encode(),
+                                  addr.encode(),
+                                  struct.pack(b">H", port)]))
+    data = await remote_reader.readexactly(4)
+    assert data[1] == 0
+    if data[3] == 1:  # read ipv4 addr
+        await remote_reader.readexactly(4)
+    elif data[3] == 3:  # read host addr
+        size = await remote_reader.readexactly(1)
+        size = ord(size)
+        await remote_reader.readexactly(size)
+    elif data[3] == 4:  # read ipv6 addr
+        await remote_reader.readexactly(16)
+    await remote_reader.readexactly(2)  # read port
+    return remote_reader, remote_writer
+
+
 async def open_connection(addr, port, proxy, nodelay=False):
     # do security check here
     data = await request_is_loopback(addr)
@@ -56,14 +81,7 @@ async def open_connection(addr, port, proxy, nodelay=False):
 
     # create connection
     if proxy:
-        fut = asyncio.open_connection(proxy[0], proxy[1], limit=131072)
-        remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=2)
-        s = 'CONNECT {0}:{1} HTTP/1.1\r\nHost: {0}:{1}\r\n\r\n'.format(addr, port)
-        remote_writer.write(s.encode())
-        fut = remote_reader.readuntil(b'\r\n\r\n')
-        data = await asyncio.wait_for(fut, timeout=2)
-        if b'200' not in data:
-            raise IOError(0, 'create tunnel via %s failed!' % proxy)
+        remote_reader, remote_writer = await connect_socks5(addr, port, proxy)
     else:
         fut = asyncio.open_connection(addr, port, limit=262144)
         remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=6)
