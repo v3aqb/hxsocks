@@ -224,7 +224,7 @@ class Hxs2Connection():
                     # sent data to stream
                     try:
                         if isinstance(self._stream_writer[stream_id], UDPRelay):
-                            await self._stream_writer[stream_id].send(data)
+                            await self._stream_writer[stream_id].send_raw(data)
                         else:
                             self._stream_writer[stream_id].write(data)
                             self._stream_context[stream_id].data_recv(len(data))

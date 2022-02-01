@@ -73,7 +73,7 @@ def start_hxs_server(confpath):
         if udp_enable:
             if isinstance(udp_enable, list) and server_.address[1] not in udp_enable:
                 continue
-            udp_server = UDPRelayServer(server_.address, server_.method, server_.psk, udp_timeout, udp_mode)
+            udp_server = UDPRelayServer(server_, udp_timeout, udp_mode)
             udp_server.start()
             server_list.append(udp_server)
 

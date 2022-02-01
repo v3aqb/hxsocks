@@ -20,6 +20,9 @@ class UDPRelay:
     def __init__(self, parent, client_addr, timeout=60, mode=PORTRESTRICTED):
         self.parent = parent
         self.logger = self.parent.logger
+        if isinstance(client_addr, int):
+            addr = self.parent._client_address
+            client_addr = (self.parent.user + ': ' + addr[0], addr[1])
         self.client_addr = client_addr
         self.timeout = timeout
         self.mode = mode
@@ -30,11 +33,7 @@ class UDPRelay:
         self._close = False
         self._recv_task = None
 
-    async def send(self, data):
-        async with self.lock:
-            if not self.remote_stream:
-                self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
-                self._recv_task = asyncio.ensure_future(self.recv_from_remote())
+    async def send_raw(self, data):
         data_io = io.BytesIO(data)
         addrtype = data_io.read(1)[0]
         if addrtype == 1:
@@ -52,9 +51,25 @@ class UDPRelay:
 
         dgram = data_io.read()
         remote_ip = ipaddress.ip_address(addr)
-        if remote_ip.is_private:
-            self.logger.warning('on_server_recv, %r, %r, is_private', self.client_addr, addr)
+
+        if remote_ip.is_multicast:
+            client = '%s:%d' % self.client_addr
+            self.logger.warning('on_server_recv, %r, %r, is_multicast, drop', client, addr)
             return
+
+        if remote_ip.is_private:
+            client = '%s:%d' % self.client_addr
+            self.logger.warning('on_server_recv, %r, %r, is_private, drop', client, addr)
+            return
+
+        await self.send(addr, port, dgram, data)
+
+    async def send(self, addr, port, dgram, data):
+        async with self.lock:
+            if not self.remote_stream:
+                self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
+                self._recv_task = asyncio.ensure_future(self.recv_from_remote())
+
         self._last_active = time.monotonic()
         if self.mode:
             key = addr if self.mode == 1 else (addr, port)
@@ -109,13 +124,15 @@ class UDPRelayServer:
     '''
     provide udp relay for shadowsocks
     '''
-    def __init__(self, server_addr, method, key, timeout, mode):
-        self.server_addr = server_addr
-        self.task = None
-        self.method = method
-        self.__key = key
+    def __init__(self, server, timeout, mode):
+        self.server_addr = server.address
+        self.method = server.method
+        self.__key = server.psk
+        self.proxy = server.proxy
         self.timeout = timeout
         self.mode = mode
+
+        self.task = None
         self.server_stream = None
         self.relay_holder = {}  # {client_addr: udp_relay}
 
@@ -145,7 +162,7 @@ class UDPRelayServer:
 
         self.logger.debug('on_server_recv, %r', client_addr)
         relay = await self.get_relay(client_addr)
-        await relay.send(data)
+        await relay.send_raw(data)
 
     async def on_remote_recv(self, client_addr, data):
         '''
