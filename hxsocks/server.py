@@ -182,7 +182,7 @@ class HXsocksHandler:
             await self.play_dead()
             return
         except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError):
-            self.logger.warning('iv read failed, %s', self.client_address)
+            self.logger.debug('iv read failed, %s', self.client_address)
             return
 
         # read cmd
