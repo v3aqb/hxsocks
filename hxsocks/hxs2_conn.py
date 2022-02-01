@@ -466,7 +466,7 @@ class Hxs2Connection():
         if wbuffer_size > REMOTE_WRITE_BUFFER * 16:
             self.logger.error('wbuffer_size > REMOTE_WRITE_BUFFER * 16')
 
-        with self._stream_context[stream_id].drain_lock:
+        async with self._stream_context[stream_id].drain_lock:
             try:
                 # tell client to stop reading
                 self.send_frame(WINDOW_UPDATE, 1, stream_id, bytes(random.randint(64, 256)))
