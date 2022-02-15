@@ -28,7 +28,7 @@ import traceback
 
 from hxcrypto import InvalidTag, AEncryptor
 from hxsocks.util import open_connection
-from .udp_relay import UDPRelay
+from hxsocks.udp_relay import UDPRelay
 
 
 CTX = b'hxsocks2'

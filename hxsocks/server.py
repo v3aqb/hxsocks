@@ -174,7 +174,7 @@ class HXsocksHandler:
 
         # read iv
         try:
-            fut = self.client_reader.readexactly(self.encryptor._iv_len)
+            fut = self.client_reader.readexactly(self.encryptor.iv_len)
             iv_ = await asyncio.wait_for(fut, timeout=10)
             self.encryptor.decrypt(iv_)
         except IVError:
