@@ -217,6 +217,7 @@ class HXsocksHandler:
             pklen = data.read(1)[0]
             client_pkey = data.read(pklen)
             client_auth = data.read(32)
+            mode = data.read(1)[0]
 
             try:
                 client, reply, shared_secret = self.user_mgr.hxs2_auth(client_pkey, client_auth)
@@ -226,7 +227,7 @@ class HXsocksHandler:
                 await self.play_dead()
                 return
 
-            reply = reply + bytes(random.randint(64, 2048))
+            reply = reply + bytes((mode, )) + bytes(random.randint(64, 2048))
             reply = struct.pack('>H', len(reply)) + reply
             client_writer.write(self.encryptor.encrypt(reply))
 
@@ -234,6 +235,7 @@ class HXsocksHandler:
                                   client_writer,
                                   client,
                                   shared_secret,
+                                  mode,
                                   self.server.proxy,
                                   self.user_mgr,
                                   self.address,

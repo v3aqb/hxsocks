@@ -27,6 +27,7 @@ import socket
 import traceback
 
 from hxcrypto import InvalidTag, AEncryptor
+from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection
 from hxsocks.udp_relay import UDPRelay
 
@@ -108,9 +109,11 @@ class ForwardContext:
 class Hxs2Connection():
     bufsize = 65535 - 22
 
-    def __init__(self, reader, writer, user, skey, proxy, user_mgr, server_addr, logger, tcp_nodelay, timeout):
+    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, tcp_nodelay, timeout):
         self.__cipher = None  # AEncryptor(skey, method, CTX)
         self.__skey = skey
+        if mode == 1:
+            self.__cipher = EncryptorStream(skey, 'rc4-md5', check_iv=False)
         self._client_reader = reader
         self._client_writer = writer
         self._client_address = writer.get_extra_info('peername')
