@@ -19,6 +19,8 @@ features
 install
 -------
 
+You may want to install ``python3-uvloop`` to increase performance.
+
 ::
 
     pip3 install https://github.com/v3aqb/hxcrypto/archive/master.zip
@@ -27,7 +29,7 @@ install
 update
 ------
 
-using `pip -U` may cause problems, better uninstall and install.
+using ``pip -U`` may cause problems, better uninstall and install.
 
 ::
 
