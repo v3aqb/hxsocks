@@ -32,8 +32,8 @@ import asyncio
 import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
-from .hxs2_conn import Hxs2Connection
-from .util import open_connection, parse_hostport
+from hxsocks.hxs2_conn import Hxs2Connection
+from hxsocks.util import open_connection, parse_hostport
 
 
 DEFAULT_METHOD = 'chacha20-ietf-poly1305'
