@@ -22,6 +22,11 @@ import os
 import sys
 import argparse
 import asyncio
+try:
+    import uvloop
+    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+except ImportError:
+    pass
 
 from .start_server import start_hxs_server
 
