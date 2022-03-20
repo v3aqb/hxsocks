@@ -114,6 +114,7 @@ class Hxs2Connection():
         self.__skey = skey
         if mode == 1:
             self.__cipher = EncryptorStream(skey, 'rc4-md5', check_iv=False)
+            self.bufsize += 16
         self._client_reader = reader
         self._client_writer = writer
         self._client_address = writer.get_extra_info('peername')
@@ -230,8 +231,8 @@ class Hxs2Connection():
                             await self._stream_writer[stream_id].send_raw(data)
                         else:
                             self._stream_writer[stream_id].write(data)
-                            self._stream_context[stream_id].data_recv(len(data))
                             await self.stream_writer_drain(stream_id)
+                        self._stream_context[stream_id].data_recv(len(data))
                     except ConnectionError:
                         # remote closed, reset stream
                         asyncio.ensure_future(self.close_stream(stream_id))
