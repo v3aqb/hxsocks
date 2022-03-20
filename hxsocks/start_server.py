@@ -5,10 +5,10 @@ import hashlib
 
 import yaml
 
-from .server import Server, HXsocksHandler
-from .user_manager import UserManager, ECC
+from hxsocks.server import Server, HXsocksHandler
+from hxsocks.user_manager import UserManager, ECC
 try:
-    from .udp_relay import UDPRelayServer
+    from hxsocks.udp_relay import UDPRelayServer
 except ImportError:
     UDPRelayServer = None
 
