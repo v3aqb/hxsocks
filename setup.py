@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="hxsocks",
-    version="0.0.3",
+    version="0.0.4",
     license='GNU General Public License v3 (GPLv3)',
     description="A fast tunnel proxy that help you get through firewalls",
     author='v3aqb',
@@ -14,8 +14,8 @@ setup(
             'hxsocks = hxsocks.__main__:main'
         ]
     },
-    dependency_links=['https://github.com/v3aqb/hxcrypto/archive/master.zip#egg=hxcrypto-0.0.2'],
-    install_requires=["hxcrypto", "pyyaml", "asyncio-dgram"],
+    dependency_links=['https://github.com/v3aqb/hxcrypto/archive/master.zip#egg=hxcrypto-0.0.3'],
+    install_requires=["hxcrypto", "pyyaml", "asyncio-dgram", "websockets"],
     classifiers=[
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',
         'Programming Language :: Python :: 3.7',

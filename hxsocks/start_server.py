@@ -6,6 +6,7 @@ import hashlib
 import yaml
 
 from hxsocks.server import Server, HXsocksHandler
+from hxsocks.hxs3_server import hxs3_server
 from hxsocks.user_manager import UserManager, ECC
 try:
     from hxsocks.udp_relay import UDPRelayServer
@@ -67,15 +68,19 @@ def start_hxs_server(confpath):
 
     server_list = []
     for server in servers:
-        server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout)
-        server_.start()
-        server_list.append(server_)
-        if udp_enable:
-            if isinstance(udp_enable, list) and server_.address[1] not in udp_enable:
-                continue
-            udp_server = UDPRelayServer(server_, udp_timeout, udp_mode)
-            udp_server.start()
-            server_list.append(udp_server)
+        if server.startswith(('ss', 'hxs2')):
+            server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout)
+            server_.start()
+            server_list.append(server_)
+            if udp_enable:
+                if isinstance(udp_enable, list) and server_.address[1] not in udp_enable:
+                    continue
+                udp_server = UDPRelayServer(server_, udp_timeout, udp_mode)
+                udp_server.start()
+                server_list.append(udp_server)
+        if server.startswith('hxs3'):
+            server = hxs3_server(server, user_mgr, log_level)
+            server.start_service()
 
     # loop.run_forever()
     return server_list
