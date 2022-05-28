@@ -91,6 +91,7 @@ class hxs3_handler:
         self.logger = server.logger
         self.user_mgr = server.user_mgr
         self.address = server.address
+        self.server_addr = server.address
         self._proxy = server.proxy
         self.websocket = None
         self.client_address = None
@@ -224,13 +225,14 @@ class hxs3_handler:
                     # sent data to stream
                     try:
                         if isinstance(self._stream_writer[stream_id], UDPRelay):
-                            await self._stream_writer[stream_id].send(data)
+                            await self._stream_writer[stream_id].send_raw(data)
                         else:
                             self._stream_writer[stream_id].write(data)
                             await self.stream_writer_drain(stream_id)
                         self._stream_context[stream_id].data_recv(len(data))
                     except ConnectionError:
                         # remote closed, reset stream
+                        self.logger.info('close_stream %d', stream_id)
                         asyncio.ensure_future(self.close_stream(stream_id))
                 elif frame_type == HEADERS:  # 1
                     if self._next_stream_id == stream_id:
@@ -283,7 +285,9 @@ class hxs3_handler:
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        self._stream_writer[stream_id] = UDPRelay(self, stream_id, 300, 0)
+                        relay = UDPRelay(self, self.user, stream_id, 300, 0)
+                        await relay.bind()
+                        self._stream_writer[stream_id] = relay
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err)

@@ -17,21 +17,25 @@ PORTRESTRICTED = 2
 
 
 class UDPRelay:
-    def __init__(self, parent, client_addr, timeout=60, mode=PORTRESTRICTED):
+    def __init__(self, parent, client, stream_id, timeout=60, mode=RESTRICTED):
         self.parent = parent
         self.logger = self.parent.logger
-        if isinstance(client_addr, int):
-            addr = self.parent._client_address
-            client_addr = (self.parent.user + ': ' + addr[0], addr[1])
-        self.client_addr = client_addr
+        self.client = client
+        self.stream_id = stream_id
         self.timeout = timeout
         self.mode = mode
         self.remote_stream = None
         self.remote_addr = set()
         self.lock = asyncio.Lock()
+        self.init_time = time.monotonic()
         self._last_active = time.monotonic()
         self._close = False
         self._recv_task = None
+
+    async def bind(self):
+        self.remote_stream = await asyncio_dgram.bind(('0.0.0.0', 0))
+        self.logger.info('udp_relay start, %s', self.stream_id)
+        self._recv_task = asyncio.ensure_future(self.recv_from_remote())
 
     async def send_raw(self, data):
         data_io = io.BytesIO(data)
@@ -53,37 +57,32 @@ class UDPRelay:
         remote_ip = ipaddress.ip_address(addr)
 
         if remote_ip.is_multicast:
-            client = '%s:%d' % self.client_addr
-            self.logger.warning('on_server_recv, %r, %r, is_multicast, drop', client, addr)
+            self.logger.warning('on_server_recv, %s, %r, is_multicast, drop', self.client, addr)
             return
 
         if remote_ip.is_private:
-            client = '%s:%d' % self.client_addr
-            self.logger.warning('on_server_recv, %r, %r, is_private, drop', client, addr)
+            self.logger.warning('on_server_recv, %s, %r, is_private, drop', self.client, addr)
             return
 
         await self.send(addr, port, dgram, data)
 
     async def send(self, addr, port, dgram, data):
-        async with self.lock:
-            if not self.remote_stream:
-                self.remote_stream = await asyncio_dgram.bind((self.parent.server_addr[0], 0))
-                self._recv_task = asyncio.ensure_future(self.recv_from_remote())
-
-        self._last_active = time.monotonic()
+        self.logger.debug('udp send %s:%d, %d', addr, port, len(dgram))
         if self.mode:
             key = addr if self.mode == 1 else (addr, port)
             self.remote_addr.add(key)
         try:
             await self.remote_stream.send(dgram, (addr, port))
-        except OSError:
-            self.logger.info('udp send fail. %s:%d', addr, port)
+            self._last_active = time.monotonic()
+        except OSError as err:
+            self.logger.info('udp send fail. %s:%d, %r', addr, port, err)
 
     async def recv_from_remote(self):
         while not self._close:
             try:
                 fut = self.remote_stream.recv()
                 dgram, remote_addr = await asyncio.wait_for(fut, timeout=6)
+                self._last_active = time.monotonic()
             except asyncio.TimeoutError:
                 if time.monotonic() - self._last_active > self.timeout:
                     break
@@ -96,16 +95,17 @@ class UDPRelay:
                 if key not in self.remote_addr:
                     self.logger.info('udp drop %r', remote_addr)
                     continue
-
-            self._last_active = time.monotonic()
-            remote_ip = ipaddress.ip_address(remote_addr[0])
+            addr, port = remote_addr
+            self.logger.debug('udp recv %s:%d, %d', addr, port, len(dgram))
+            remote_ip = ipaddress.ip_address(addr)
             buf = b'\x01' if remote_ip.version == 4 else b'\x04'
             buf += remote_ip.packed
-            buf += struct.pack(b'>H', remote_addr[1])
+            buf += struct.pack(b'>H', port)
             buf += dgram
-            await self.parent.on_remote_recv(self.client_addr, buf)
+            await self.parent.on_remote_recv(self.stream_id, buf)
+        self.logger.info('udp_relay end, %s, %ds', self.stream_id, int(time.monotonic() - self.init_time))
         self.remote_stream.close()
-        self.parent.close_relay(self.client_addr)
+        self.parent.close_relay(self.stream_id)
 
     def close(self):
         self._close = True
@@ -194,6 +194,7 @@ class UDPRelayServer:
         '''
         if client_addr not in self.relay_holder:
             self.logger.debug('start udp_relay %r', client_addr)
-            relay = UDPRelay(self, client_addr, self.timeout, self.mode)
+            relay = UDPRelay(self, '%s:%d' % client_addr, client_addr, self.timeout, self.mode)
+            await relay.bind()
             self.relay_holder[client_addr] = relay
         return self.relay_holder[client_addr]

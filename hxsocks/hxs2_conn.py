@@ -117,7 +117,7 @@ class Hxs2Connection():
             self.bufsize += 16
         self._client_reader = reader
         self._client_writer = writer
-        self._client_address = writer.get_extra_info('peername')
+        self.client_address = writer.get_extra_info('peername')
         self._client_writer.transport.set_write_buffer_limits(524288)
         # suppose client support async drain
         self._settings_async_drain = False
@@ -287,7 +287,9 @@ class Hxs2Connection():
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        self._stream_writer[stream_id] = UDPRelay(self, stream_id, 300, 0)
+                        relay = UDPRelay(self, self.user, stream_id, 300, 0)
+                        await relay.bind()
+                        self._stream_writer[stream_id] = relay
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err)
@@ -312,11 +314,11 @@ class Hxs2Connection():
         return self._next_stream_id == 1
 
     async def create_connection(self, stream_id, host, port):
-        self.logger.info('connecting %s:%s %s %s', host, port, self.user, self._client_address)
+        self.logger.info('connecting %s:%s %s %s', host, port, self.user, self.client_address)
         timelog = time.monotonic()
 
         try:
-            self.user_mgr.user_access_ctrl(self._s_port, host, self._client_address, self.user)
+            self.user_mgr.user_access_ctrl(self._s_port, host, self.client_address, self.user)
             reader, writer = await open_connection(host, port, self._proxy, self._tcp_nodelay)
             writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
         except (ConnectionError, asyncio.TimeoutError, socket.gaierror) as err:
@@ -353,8 +355,8 @@ class Hxs2Connection():
 
         header = struct.pack('>BBH', type_, flags, stream_id)
         data = header + payload
-        ct = self.__cipher.encrypt(data)
-        self._client_writer.write(struct.pack('>H', len(ct)) + ct)
+        ct_ = self.__cipher.encrypt(data)
+        self._client_writer.write(struct.pack('>H', len(ct_)) + ct_)
 
     def send_one_data_frame(self, stream_id, data):
         payload = struct.pack('>H', len(data)) + data
@@ -428,7 +430,7 @@ class Hxs2Connection():
         self.user_mgr.user_access_log(self._s_port,
                                       self._stream_context[stream_id].host,
                                       traffic,
-                                      self._client_address,
+                                      self.client_address,
                                       self.user)
 
     async def close_stream(self, stream_id):
