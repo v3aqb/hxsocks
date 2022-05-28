@@ -120,7 +120,11 @@ class hxs3_handler:
             self.client_address = (xff[0], 0)
 
         fut = self.websocket.recv()
-        client_auth = await asyncio.wait_for(fut, timeout=6)
+        try:
+            client_auth = await asyncio.wait_for(fut, timeout=6)
+        except asyncio.TimeoutError:
+            self.logger.error('read client auth failed. client: %s', self.client_address)
+            return
         data = io.BytesIO(client_auth)
 
         ver = data.read(1)[0]
