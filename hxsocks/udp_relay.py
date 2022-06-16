@@ -33,9 +33,13 @@ class UDPRelay:
         self._recv_task = None
 
     async def bind(self):
-        self.remote_stream = await asyncio_dgram.bind(('0.0.0.0', 0))
+        stream = await asyncio_dgram.connect(('8.8.8.8', 53))
+        interface = stream.sockname[0]
+        stream.close()
+        self.remote_stream = await asyncio_dgram.bind((interface, 0))
         self.logger.info('udp_relay start, %s', self.stream_id)
         self._recv_task = asyncio.ensure_future(self.recv_from_remote())
+        return self.remote_stream.sockname
 
     async def send_raw(self, data):
         data_io = io.BytesIO(data)
