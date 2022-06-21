@@ -47,6 +47,7 @@ class UserManager:
         self.userpkeys = defaultdict(deque)  # user name: client key
         self.pkeyuser = {}  # user pubkey: user name
         self.porn_filter = porn_filter()
+        self.quick_auth_data = {}
 
     def add_user(self, user, password):
         password, _, tags = password.partition(' ')
@@ -58,11 +59,38 @@ class UserManager:
         del self.user_pass[user]
         del self.user_tag[user]
 
+    def quick_auth_update(self, _ts):
+        ts_current = int(time.time()) // 30
+        # clean
+        ts_list = list(self.quick_auth_data.keys())
+        for ts_stored in ts_list:
+            if ts_stored < ts_current - 1:
+                del self.quick_auth_data[ts_stored]
+        # add
+        if abs(ts_current - _ts) > 1:
+            return
+        if _ts in self.quick_auth_data:
+            return
+        self.quick_auth_data[_ts] = {}
+        for username, password_ in self.user_pass.items():
+            hash_ = hmac.new(password_.encode() + username.encode(),
+                             struct.pack('>I', _ts),
+                             hashlib.sha256).digest()
+            self.quick_auth_data[_ts][hash_] = username
+
     def hxs2_auth(self, client_pkey, client_auth):
-        ts_ = int(time.time()) // 30
+        ts_current = int(time.time()) // 30
         user = None
         password = None
-        for _ts in [ts_, ts_ - 1, ts_ + 1]:
+        for _ts in [ts_current, ts_current - 1, ts_current + 1]:
+            # quick auth
+            if _ts not in self.quick_auth_data:
+                self.quick_auth_update(_ts)
+            if _ts in self.quick_auth_data and client_auth in self.quick_auth_data[_ts]:
+                user = self.quick_auth_data[_ts][client_auth]
+                password = self.user_pass[user]
+                break
+            # legacy auth
             for username, password_ in self.user_pass.items():
                 hash_ = hmac.new(password_.encode(),
                                  struct.pack('>I', _ts) + client_pkey + username.encode(),
