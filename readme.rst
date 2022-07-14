@@ -3,8 +3,9 @@ hxsocks
 
 A better encrypted socks proxy.
 
+2022.06.22: introduce new authentication method
 2021.11.7: disable shadowsocks by default
-2018.5.30: update key exchange method
+2018.05.30: update key exchange method
 
 new protocol
 --------
