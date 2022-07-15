@@ -285,7 +285,7 @@ class hxs3_handler:
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        relay = UDPRelay(self, self.user, stream_id, 300, 0)
+                        relay = UDPRelay(self, self.user, stream_id, 600, 0)
                         await relay.bind()
                         self._stream_writer[stream_id] = relay
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)

@@ -17,7 +17,7 @@ PORTRESTRICTED = 2
 
 
 class UDPRelay:
-    def __init__(self, parent, client, stream_id, timeout=60, mode=RESTRICTED):
+    def __init__(self, parent, client, stream_id, timeout=300, mode=RESTRICTED):
         self.parent = parent
         self.logger = self.parent.logger
         self.client = client
@@ -94,13 +94,14 @@ class UDPRelay:
             except OSError:
                 break
 
+            addr, port = remote_addr
+            self.logger.debug('udp recv %s:%d, %d', addr, port, len(dgram))
+
             if self.mode:
                 key = remote_addr[0] if self.mode == 1 else remote_addr
                 if key not in self.remote_addr:
                     self.logger.info('udp drop %r', remote_addr)
                     continue
-            addr, port = remote_addr
-            self.logger.debug('udp recv %s:%d, %d', addr, port, len(dgram))
             remote_ip = ipaddress.ip_address(addr)
             buf = b'\x01' if remote_ip.version == 4 else b'\x04'
             buf += remote_ip.packed
