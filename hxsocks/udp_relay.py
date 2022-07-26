@@ -28,7 +28,8 @@ class UDPRelay:
         self.remote_addr = set()
         self.lock = asyncio.Lock()
         self.init_time = time.monotonic()
-        self._last_active = time.monotonic()
+        self.last_recv = 0
+        self.last_send = 0
         self._close = False
         self._recv_task = None
 
@@ -77,7 +78,7 @@ class UDPRelay:
             self.remote_addr.add(key)
         try:
             await self.remote_stream.send(dgram, (addr, port))
-            self._last_active = time.monotonic()
+            self.last_send = time.monotonic()
         except OSError as err:
             self.logger.info('udp send fail. %s:%d, %r', addr, port, err)
 
@@ -86,9 +87,10 @@ class UDPRelay:
             try:
                 fut = self.remote_stream.recv()
                 dgram, remote_addr = await asyncio.wait_for(fut, timeout=6)
-                self._last_active = time.monotonic()
+                self.last_recv = time.monotonic()
             except asyncio.TimeoutError:
-                if time.monotonic() - self._last_active > self.timeout:
+                inactive = time.monotonic() - max(self.last_recv, self.last_send, self.init_time)
+                if inactive > self.timeout:
                     break
                 continue
             except OSError:
