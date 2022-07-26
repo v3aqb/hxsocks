@@ -144,14 +144,10 @@ class Hxs2Connection():
 
     async def handle_connection(self):
         self.logger.debug('start recieving frames...')
-        timeout_count = 0
 
         while not self._connection_lost:
             try:
                 if self._gone and not self._stream_writer:
-                    break
-
-                if time.monotonic() - self._last_active > self.timeout * 2:
                     break
 
                 # read frame_len
@@ -159,16 +155,13 @@ class Hxs2Connection():
                     fut = self._client_reader.readexactly(2)
                     frame_len = await asyncio.wait_for(fut, timeout=10)
                     frame_len, = struct.unpack('>H', frame_len)
-                    timeout_count = 0
                 except (asyncio.IncompleteReadError, ValueError, InvalidTag,
                         ConnectionError) as err:
                     self.logger.debug('read frame_len error: %r', err)
                     break
                 except asyncio.TimeoutError:
-                    timeout_count += 1
-                    if timeout_count > 10:
-                        # client should sent ping to keep_alive
-                        self.logger.debug('read frame_len timed out.')
+                    if time.monotonic() - self._last_active > self.timeout * 2:
+                        self.logger.info('read frame_len timed out.')
                         break
                     continue
 
@@ -209,7 +202,7 @@ class Hxs2Connection():
                 header = frame_data.read(4)
                 frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
 
-                if frame_type in (DATA, HEADERS):
+                if frame_type in (DATA, HEADERS, UDP_ASSOCIATE):
                     self._last_active = time.monotonic()
 
                 self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
