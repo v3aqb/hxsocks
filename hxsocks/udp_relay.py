@@ -201,7 +201,7 @@ class UDPRelayServer:
         '''
         if client_addr not in self.relay_holder:
             self.logger.debug('start udp_relay %r', client_addr)
-            relay = UDPRelay(self, '%s:%d' % client_addr, client_addr, self.timeout, self.mode)
+            relay = UDPRelay(self, client_addr[0], client_addr, self.timeout, self.mode)
             await relay.bind()
             self.relay_holder[client_addr] = relay
         return self.relay_holder[client_addr]
