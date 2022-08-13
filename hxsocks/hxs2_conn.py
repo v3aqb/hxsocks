@@ -109,7 +109,7 @@ class ForwardContext:
 class Hxs2Connection():
     bufsize = 65535 - 22
 
-    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, tcp_nodelay, timeout):
+    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, tcp_nodelay, tcp_timeout, udp_timeout):
         self.__cipher = None  # AEncryptor(skey, method, CTX)
         self.__skey = skey
         if mode == 1:
@@ -126,7 +126,8 @@ class Hxs2Connection():
         self._s_port = server_addr[1]
         self.logger = logger
         self._tcp_nodelay = tcp_nodelay
-        self.timeout = timeout
+        self.tcp_timeout = tcp_timeout
+        self.udp_timeout = udp_timeout
         self.user = user
         self.user_mgr = user_mgr
         self._connection_lost = False
@@ -153,14 +154,14 @@ class Hxs2Connection():
                 # read frame_len
                 try:
                     fut = self._client_reader.readexactly(2)
-                    frame_len = await asyncio.wait_for(fut, timeout=10)
+                    frame_len = await asyncio.wait_for(fut, timeout=30)
                     frame_len, = struct.unpack('>H', frame_len)
                 except (asyncio.IncompleteReadError, ValueError, InvalidTag,
                         ConnectionError) as err:
                     self.logger.debug('read frame_len error: %r', err)
                     break
                 except asyncio.TimeoutError:
-                    if time.monotonic() - self._last_active > self.timeout * 2:
+                    if time.monotonic() - self._last_active > self.tcp_timeout * 2:
                         self.logger.info('read frame_len timed out.')
                         break
                     continue
@@ -281,7 +282,7 @@ class Hxs2Connection():
                         self._next_stream_id += 1
                         # get a udp relay
                         client = '%s:%d' % (self.client_address[0], self.user)
-                        relay = UDPRelay(self, client, stream_id, 600, 0)
+                        relay = UDPRelay(self, client, stream_id, self.udp_timeout, 0)
                         await relay.bind()
                         self._stream_writer[stream_id] = relay
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)

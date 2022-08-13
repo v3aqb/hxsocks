@@ -69,7 +69,7 @@ def start_hxs_server(confpath):
     server_list = []
     for server in servers:
         if server.startswith(('ss', 'hxs2')):
-            server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout)
+            server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout, udp_timeout)
             server_.start()
             server_list.append(server_)
             if udp_enable:
@@ -79,7 +79,7 @@ def start_hxs_server(confpath):
                 udp_server.start()
                 server_list.append(udp_server)
         if server.startswith('hxs3'):
-            server = hxs3_server(server, user_mgr, log_level)
+            server = hxs3_server(server, user_mgr, log_level, tcp_timeout, udp_timeout)
             server.start_service()
 
     # loop.run_forever()

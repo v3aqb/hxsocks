@@ -54,12 +54,13 @@ class ForwardContext:
 
 
 class Server:
-    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay=False, timeout=180):
+    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay=False, tcp_timeout=180, udp_timeout=300):
         self._handler_class = handler_class
         self.user_mgr = user_mgr
         self.server = None
         self.tcp_nodelay = tcp_nodelay
-        self.timeout = timeout
+        self.tcp_timeout = tcp_timeout
+        self.udp_timeout = udp_timeout
 
         self.serverinfo = serverinfo
         parse = urllib.parse.urlparse(serverinfo)
@@ -115,7 +116,8 @@ class HXsocksHandler:
         self.logger = server.logger
         self.user_mgr = self.server.user_mgr
         self.address = self.server.address
-        self.timeout = self.server.timeout
+        self.tcp_timeout = server.tcp_timeout
+        self.udp_timeout = server.udp_timeout
 
         self.encryptor = Encryptor(self.server.psk, self.server.method)
         self.__key = self.server.psk
@@ -241,7 +243,8 @@ class HXsocksHandler:
                                   self.address,
                                   self.logger,
                                   self.server.tcp_nodelay,
-                                  self.timeout)
+                                  self.tcp_timeout,
+                                  self.udp_timeout)
             result = await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)
@@ -339,7 +342,7 @@ class HXsocksHandler:
                 data = await asyncio.wait_for(fut, timeout=6)
                 context.last_active = time.time()
             except asyncio.TimeoutError:
-                if time.time() - context.last_active > self.timeout or context.remote_eof:
+                if time.time() - context.last_active > self.tcp_timeout or context.remote_eof:
                     data = b''
                 else:
                     continue
@@ -369,7 +372,7 @@ class HXsocksHandler:
                 data = await asyncio.wait_for(fut, timeout=6)
                 context.last_active = time.time()
             except asyncio.TimeoutError:
-                if time.time() - context.last_active > self.timeout or context.local_eof:
+                if time.time() - context.last_active > self.tcp_timeout or context.local_eof:
                     data = b''
                 else:
                     continue
