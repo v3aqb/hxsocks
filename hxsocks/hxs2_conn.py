@@ -281,7 +281,7 @@ class Hxs2Connection():
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        client = '%s:%d' % (self.client_address[0], self.user)
+                        client = '%s:%s' % (self.client_address[0], self.user)
                         relay = UDPRelay(self, client, stream_id, self.udp_timeout, 0)
                         await relay.bind()
                         self._stream_writer[stream_id] = relay
@@ -393,7 +393,7 @@ class Hxs2Connection():
                 await self.close_stream(stream_id)
                 break
             except asyncio.TimeoutError:
-                if time.monotonic() - self._stream_context[stream_id].last_active < self.timeout and \
+                if time.monotonic() - self._stream_context[stream_id].last_active < self.tcp_timeout and \
                         self._stream_context[stream_id].stream_status == OPEN:
                     continue
                 data = b''
