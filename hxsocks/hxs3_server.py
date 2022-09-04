@@ -165,7 +165,7 @@ class hxs3_handler:
                 await asyncio.wait_for(fut, timeout)
             except asyncio.TimeoutError:
                 continue
-            except OSError:
+            except (OSError, RuntimeError):
                 return
 
     async def handle_connection(self):
@@ -208,7 +208,7 @@ class hxs3_handler:
                 if frame_type == DATA:  # 0
                     # check if remote socket writable
                     if self._stream_context[stream_id].stream_status & EOF_RECV:
-                        self.logger.warning('data recv while stream closed.')
+                        self.logger.warning('data recv while stream closed. sid %d', stream_id)
                         continue
                     # first 2 bytes of payload indicates data_len
                     data_len, = struct.unpack('>H', frame_data.read(2))
@@ -402,7 +402,8 @@ class hxs3_handler:
         else:
             await self.send_one_data_frame(stream_id, data)
 
-    on_remote_recv = send_data_frame
+    async def on_remote_recv(self, stream_id, data, remote_addr):
+        await self.send_data_frame(stream_id, data)
 
     async def read_from_remote(self, stream_id, remote_reader):
         self.logger.debug('start read from stream')

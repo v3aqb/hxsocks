@@ -380,7 +380,8 @@ class Hxs2Connection():
             except ConnectionError:
                 self._connection_lost = True
 
-    on_remote_recv = send_data_frame
+    async def on_remote_recv(self, stream_id, data, remote_addr):
+        await self.send_data_frame(stream_id, data)
 
     async def read_from_remote(self, stream_id, remote_reader):
         self.logger.debug('start read from stream')

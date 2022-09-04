@@ -26,6 +26,7 @@ class UDPRelay:
         self.mode = mode
         self.remote_stream = None
         self.remote_addr = set()
+        self.last_addr = ('0.0.0.0', 0)
         self.lock = asyncio.Lock()
         self.init_time = time.monotonic()
         self.last_recv = 0
@@ -38,7 +39,7 @@ class UDPRelay:
         interface = stream.sockname[0]
         stream.close()
         self.remote_stream = await asyncio_dgram.bind((interface, 0))
-        self.logger.info('udp_relay start, %s', self.stream_id)
+        self.logger.info('udp_relay start, sid: %s', self.stream_id)
         self._recv_task = asyncio.ensure_future(self.recv_from_remote())
         return self.remote_stream.sockname
 
@@ -73,9 +74,12 @@ class UDPRelay:
 
     async def send(self, addr, port, dgram, data):
         self.logger.debug('udp send %s:%d, %d', addr, port, len(dgram))
-        if self.mode:
-            key = addr if self.mode == 1 else (addr, port)
+        key = (addr, port)
+        if key not in self.remote_addr:
+            self.logger.info('udp send %s:%d, len:%d, port:%d',
+                             addr, port, len(dgram), self.remote_stream.sockname[1])
             self.remote_addr.add(key)
+        self.last_addr = (addr, port)
         try:
             await self.remote_stream.send(dgram, (addr, port))
             self.last_send = time.monotonic()
@@ -92,15 +96,19 @@ class UDPRelay:
                 inactive = time.monotonic() - max(self.last_recv, self.last_send, self.init_time)
                 if inactive > self.timeout:
                     break
+                if len(self.remote_addr) <= 1 and self.last_addr[1] == 53:
+                    if inactive > 10:
+                        break
                 continue
-            except OSError:
+            except OSError as err:
+                self.logger.error('OSError %r', err)
                 break
 
             addr, port = remote_addr
             self.logger.debug('udp recv %s:%d, %d', addr, port, len(dgram))
 
             if self.mode:
-                key = remote_addr[0] if self.mode == 1 else remote_addr
+                key = remote_addr
                 if key not in self.remote_addr:
                     self.logger.info('udp drop %r', remote_addr)
                     continue
@@ -109,8 +117,13 @@ class UDPRelay:
             buf += remote_ip.packed
             buf += struct.pack(b'>H', port)
             buf += dgram
-            await self.parent.on_remote_recv(self.stream_id, buf)
+            try:
+                await self.parent.on_remote_recv(self.stream_id, buf, remote_addr)
+            except KeyError:
+                self.logger.error('KeyError on parent.on_remote_recv')
+                break
         self.logger.info('udp_relay end, %s, %ds', self.stream_id, int(time.monotonic() - self.init_time))
+        self.logger.info('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
         self.parent.close_relay(self.stream_id)
 
@@ -171,8 +184,9 @@ class UDPRelayServer:
         relay = await self.get_relay(client_addr)
         await relay.send_raw(data)
 
-    async def on_remote_recv(self, client_addr, data):
+    async def on_remote_recv(self, client_addr, data, remote_addr):
         '''
+            remote_addr encoded in data, as shadowsocks format
             create dgram, encrypt and send to client
         '''
         if client_addr not in self.relay_holder:
