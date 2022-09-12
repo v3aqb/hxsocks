@@ -23,7 +23,7 @@ from hxcrypto import InvalidTag, AEncryptor
 from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection, parse_hostport
 from hxsocks.hxs2_conn import ForwardContext, HXS2_METHOD
-from hxsocks.udp_relay import UDPRelay
+from hxsocks.udp_relay import UDPRelay, parse_dgram
 
 
 CTX = b'hxsocks2'
@@ -171,6 +171,7 @@ class hxs3_handler:
     async def handle_connection(self):
         self.logger.debug('start recieving frames...')
 
+        user = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
             try:
                 if self._gone and not self._stream_writer:
@@ -220,7 +221,8 @@ class hxs3_handler:
                     # sent data to stream
                     try:
                         if isinstance(self._stream_writer[stream_id], UDPRelay):
-                            await self._stream_writer[stream_id].send_raw(data)
+                            addr, dgram = parse_dgram(data)
+                            await self._stream_writer[stream_id].send_dgram(addr, dgram, self, stream_id)
                         else:
                             self._stream_writer[stream_id].write(data)
                             await self.stream_writer_drain(stream_id)
@@ -280,8 +282,7 @@ class hxs3_handler:
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        client = '%s:%s' % (self.client_address[0], self.user)
-                        relay = UDPRelay(self, client, stream_id, self.udp_timeout, 0)
+                        relay = UDPRelay(self, user, stream_id, self.udp_timeout, 0)
                         await relay.bind()
                         self._stream_writer[stream_id] = relay
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)

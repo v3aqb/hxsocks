@@ -17,7 +17,7 @@ PORTRESTRICTED = 2
 
 
 class UDPRelay:
-    def __init__(self, parent, client, stream_id, timeout=300, mode=RESTRICTED):
+    def __init__(self, parent, client, stream_id, timeout=300, mode=PORTRESTRICTED):
         self.parent = parent
         self.logger = self.parent.logger
         self.client = client
@@ -39,27 +39,15 @@ class UDPRelay:
         interface = stream.sockname[0]
         stream.close()
         self.remote_stream = await asyncio_dgram.bind((interface, 0))
-        self.logger.info('udp_relay start, sid: %s', self.stream_id)
+        self.logger.info('udp_relay start, %d', self.remote_stream.sockname[1])
         self._recv_task = asyncio.ensure_future(self.recv_from_remote())
         return self.remote_stream.sockname
 
-    async def send_raw(self, data):
-        data_io = io.BytesIO(data)
-        addrtype = data_io.read(1)[0]
-        if addrtype == 1:
-            addr = data_io.read(4)
-            addr = socket.inet_ntoa(addr)
-        elif addrtype == 3:
-            addr = data_io.read(1)
-            addr = data_io.read(addr[0])
-            addr = addr.decode('ascii')
-        else:
-            addr = data_io.read(16)
-            addr = socket.inet_ntop(socket.AF_INET6, addr)
-        port = data_io.read(2)
-        port, = struct.unpack('>H', port)
+    async def send_dgram(self, addr, dgram, callback, callback_addr):
+        addr, port = addr
+        await self.send(addr, port, dgram)
 
-        dgram = data_io.read()
+    async def send(self, addr, port, dgram):
         remote_ip = ipaddress.ip_address(addr)
 
         if remote_ip.is_multicast:
@@ -70,16 +58,15 @@ class UDPRelay:
             self.logger.warning('on_server_recv, %s, %r, is_private, drop', self.client, addr)
             return
 
-        await self.send(addr, port, dgram, data)
-
-    async def send(self, addr, port, dgram, data):
         self.logger.debug('udp send %s:%d, %d', addr, port, len(dgram))
-        key = (addr, port)
+
+        key = addr if self.mode == 1 else (addr, port)
         if key not in self.remote_addr:
-            self.logger.info('udp send %s:%d, len:%d, port:%d',
-                             addr, port, len(dgram), self.remote_stream.sockname[1])
+            self.logger.info('udp send %s:%d, relay_port:%d',
+                             addr, port, self.remote_stream.sockname[1])
             self.remote_addr.add(key)
         self.last_addr = (addr, port)
+
         try:
             await self.remote_stream.send(dgram, (addr, port))
             self.last_send = time.monotonic()
@@ -108,7 +95,7 @@ class UDPRelay:
             self.logger.debug('udp recv %s:%d, %d', addr, port, len(dgram))
 
             if self.mode:
-                key = remote_addr
+                key = addr if self.mode == 1 else (addr, port)
                 if key not in self.remote_addr:
                     self.logger.info('udp drop %r', remote_addr)
                     continue
@@ -138,6 +125,28 @@ class UDPRelay:
 
     async def wait_closed(self):
         return
+
+
+def parse_dgram(data):
+    data_io = io.BytesIO(data)
+    addrtype = data_io.read(1)[0]
+    if addrtype == 1:
+        addr = data_io.read(4)
+        addr = socket.inet_ntoa(addr)
+    elif addrtype == 3:
+        addr = data_io.read(1)
+        addr = data_io.read(addr[0])
+        addr = addr.decode('ascii')
+    else:
+        addr = data_io.read(16)
+        addr = socket.inet_ntop(socket.AF_INET6, addr)
+    port = data_io.read(2)
+    port, = struct.unpack('>H', port)
+
+    dgram = data_io.read()
+
+    addr = (addr, port)
+    return (addr, dgram)
 
 
 class UDPRelayServer:
@@ -182,7 +191,8 @@ class UDPRelayServer:
 
         self.logger.debug('on_server_recv, %r', client_addr)
         relay = await self.get_relay(client_addr)
-        await relay.send_raw(data)
+        addr, dgram = parse_dgram(data)
+        await relay.send_dgram(addr, dgram, self, client_addr)
 
     async def on_remote_recv(self, client_addr, data, remote_addr):
         '''
