@@ -50,16 +50,16 @@ configure file example
 ::
 
     servers:
-        - ss://aes-128-gcm:password@0.0.0.0:8138
-        - hxs2://0.0.0.0:8140/?method=aes-128-gcm&PSK=password&proxy=127.0.0.1:8120&ss=1
-        - hxs3://0.0.0.0:8141/
+        - ss://aes-128-gcm:password@127.0.0.1:8138
+        - hxs2://127.0.0.1:8140/?method=aes-128-gcm&PSK=password&proxy=127.0.0.1:8120&ss=1
+        - hxs3://127.0.0.1:8141/
     users:
         user: password
         user2: password2
     tcp_nodelay: false
-    udp_timeout: 600
+    tcp_timeout: 600
     udp_enable: false   # boolean, port_number, or list of port enabled [8138, 8139]
-    udp_mode: 2         # 0 for fullcone, 1 for restricted, 2 for port_restricted
+    udp_mode: 3         # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric
     udp_timeout: 600
     log_level: 20
 
