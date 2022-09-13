@@ -44,10 +44,10 @@ def start_hxs_server(confpath):
     if not isinstance(udp_timeout, int):
         udp_timeout = 600
 
-    udp_mode = cfg.get('udp_mode', 2)
-    # 0 for fullcone, 1 for restricted, 2 for port_restricted
+    udp_mode = cfg.get('udp_mode', 3)
+    # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric
     if not isinstance(udp_mode, int):
-        udp_mode = 2
+        udp_mode = 3
 
     # server cert
     cert_path = os.path.join(os.path.dirname(os.path.abspath(confpath)), 'cert.pem')
@@ -69,7 +69,7 @@ def start_hxs_server(confpath):
     server_list = []
     for server in servers:
         if server.startswith(('ss', 'hxs2')):
-            server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout, udp_timeout)
+            server_ = Server(HXsocksHandler, server, user_mgr, log_level, tcp_nodelay, tcp_timeout, udp_timeout, udp_mode)
             server_.start()
             server_list.append(server_)
             if udp_enable:
@@ -79,7 +79,7 @@ def start_hxs_server(confpath):
                 udp_server.start()
                 server_list.append(udp_server)
         if server.startswith('hxs3'):
-            server = hxs3_server(server, user_mgr, log_level, tcp_timeout, udp_timeout)
+            server = hxs3_server(server, user_mgr, log_level, tcp_timeout, udp_timeout, udp_mode)
             server.start_service()
 
     # loop.run_forever()

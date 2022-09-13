@@ -54,13 +54,14 @@ class ForwardContext:
 
 
 class Server:
-    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay=False, tcp_timeout=180, udp_timeout=300):
+    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay=False, tcp_timeout=180, udp_timeout=300, udp_mode=2):
         self._handler_class = handler_class
         self.user_mgr = user_mgr
         self.server = None
         self.tcp_nodelay = tcp_nodelay
         self.tcp_timeout = tcp_timeout
         self.udp_timeout = udp_timeout
+        self.udp_mode = udp_mode
 
         self.serverinfo = serverinfo
         parse = urllib.parse.urlparse(serverinfo)
@@ -118,6 +119,7 @@ class HXsocksHandler:
         self.address = self.server.address
         self.tcp_timeout = server.tcp_timeout
         self.udp_timeout = server.udp_timeout
+        self.udp_mode = server.udp_mode
 
         self.encryptor = Encryptor(self.server.psk, self.server.method)
         self.__key = self.server.psk
@@ -244,7 +246,8 @@ class HXsocksHandler:
                                   self.logger,
                                   self.server.tcp_nodelay,
                                   self.tcp_timeout,
-                                  self.udp_timeout)
+                                  self.udp_timeout,
+                                  self.udp_mode)
             result = await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)

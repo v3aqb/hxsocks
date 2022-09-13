@@ -24,6 +24,7 @@ from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection, parse_hostport
 from hxsocks.hxs2_conn import ForwardContext, HXS2_METHOD
 from hxsocks.udp_relay import UDPRelay, parse_dgram
+from hxsocks.udp_relay2 import get_relay2, UserRelay
 
 
 CTX = b'hxsocks2'
@@ -52,7 +53,7 @@ END_STREAM_FLAG = 1
 
 
 class hxs3_server:
-    def __init__(self, server, user_mgr, log_level, tcp_timeout=120, udp_timeout=300):
+    def __init__(self, server, user_mgr, log_level, tcp_timeout=120, udp_timeout=300, udp_mode=2):
         parse = urllib.parse.urlparse(server)
         query = urllib.parse.parse_qs(parse.query)
         self.address = parse_hostport(parse.netloc)
@@ -66,6 +67,7 @@ class hxs3_server:
         self.proxy = query.get('proxy', [''])[0]
         self.tcp_timeout = tcp_timeout
         self.udp_timeout = udp_timeout
+        self.udp_mode = udp_mode
 
         self.handller_class = hxs3_handler
         self.server = None
@@ -104,6 +106,7 @@ class hxs3_handler:
 
         self.tcp_timeout = server.tcp_timeout
         self.udp_timeout = server.udp_timeout
+        self.udp_mode = server.udp_mode
         self._init_time = time.monotonic()
         self._last_active = self._init_time
         self._gone = False
@@ -220,7 +223,7 @@ class hxs3_handler:
                         break
                     # sent data to stream
                     try:
-                        if isinstance(self._stream_writer[stream_id], UDPRelay):
+                        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
                             addr, dgram = parse_dgram(data)
                             await self._stream_writer[stream_id].send_dgram(addr, dgram, self, stream_id)
                         else:
@@ -282,9 +285,12 @@ class hxs3_handler:
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        relay = UDPRelay(self, user, stream_id, self.udp_timeout, 0)
-                        await relay.bind()
-                        self._stream_writer[stream_id] = relay
+                        if self.udp_mode in (0, 1, 2):
+                            relay = UDPRelay(self, user, stream_id, self.udp_timeout, self.udp_mode)
+                            await relay.bind()
+                            self._stream_writer[stream_id] = relay
+                        else:
+                            self._stream_writer[stream_id] = get_relay2(user)
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err)
@@ -297,7 +303,9 @@ class hxs3_handler:
         task_list = []
         for stream_id in self._stream_writer:
             self._stream_context[stream_id].stream_status = CLOSED
-            if not self._stream_writer[stream_id].is_closing():
+            if isinstance(self._stream_writer[stream_id], UserRelay):
+                self._stream_writer[stream_id].user_close(self)
+            elif not self._stream_writer[stream_id].is_closing():
                 self._stream_writer[stream_id].close()
                 if stream_id in self._stream_writer:
                     task_list.append(self._stream_writer[stream_id])
@@ -389,7 +397,7 @@ class hxs3_handler:
 
     async def send_data_frame(self, stream_id, data):
         self._stream_context[stream_id].data_sent(len(data))
-        if isinstance(self._stream_writer[stream_id], UDPRelay):
+        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
             await self.send_one_data_frame(stream_id, data)
         elif len(data) > 16386 and random.random() < 0.1:
             data = io.BytesIO(data)
@@ -463,6 +471,8 @@ class hxs3_handler:
             del self._stream_writer[stream_id]
             self.log_access(stream_id)
             try:
+                if isinstance(writer, UserRelay):
+                    return
                 if not writer.is_closing():
                     writer.close()
                 await writer.wait_closed()
@@ -483,7 +493,7 @@ class hxs3_handler:
             await self._stream_writer[stream_id].drain()
 
     async def async_drain(self, stream_id):
-        if isinstance(self._stream_writer[stream_id], UDPRelay):
+        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
             return
         wbuffer_size = self._stream_writer[stream_id].transport.get_write_buffer_size()
         if wbuffer_size <= REMOTE_WRITE_BUFFER:

@@ -30,6 +30,7 @@ from hxcrypto import InvalidTag, AEncryptor
 from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection
 from hxsocks.udp_relay import UDPRelay, parse_dgram
+from hxsocks.udp_relay2 import get_relay2, UserRelay
 
 
 CTX = b'hxsocks2'
@@ -109,7 +110,7 @@ class ForwardContext:
 class Hxs2Connection():
     bufsize = 65535 - 22
 
-    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, tcp_nodelay, tcp_timeout, udp_timeout):
+    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, tcp_nodelay, tcp_timeout, udp_timeout, udp_mode):
         self.__cipher = None  # AEncryptor(skey, method, CTX)
         self.__skey = skey
         if mode == 1:
@@ -128,6 +129,7 @@ class Hxs2Connection():
         self._tcp_nodelay = tcp_nodelay
         self.tcp_timeout = tcp_timeout
         self.udp_timeout = udp_timeout
+        self.udp_mode = udp_mode
         self.user = user
         self.user_mgr = user_mgr
         self._connection_lost = False
@@ -222,7 +224,7 @@ class Hxs2Connection():
                         break
                     # sent data to stream
                     try:
-                        if isinstance(self._stream_writer[stream_id], UDPRelay):
+                        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
                             addr, dgram = parse_dgram(data)
                             await self._stream_writer[stream_id].send_dgram(addr, dgram, self, stream_id)
                         else:
@@ -283,9 +285,12 @@ class Hxs2Connection():
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        relay = UDPRelay(self, user, stream_id, self.udp_timeout, 0)
-                        await relay.bind()
-                        self._stream_writer[stream_id] = relay
+                        if self.udp_mode in (0, 1, 2):
+                            relay = UDPRelay(self, user, stream_id, self.udp_timeout, self.udp_mode)
+                            await relay.bind()
+                            self._stream_writer[stream_id] = relay
+                        else:
+                            self._stream_writer[stream_id] = get_relay2(user)
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err)
@@ -298,7 +303,9 @@ class Hxs2Connection():
         task_list = []
         for stream_id in self._stream_writer:
             self._stream_context[stream_id].stream_status = CLOSED
-            if not self._stream_writer[stream_id].is_closing():
+            if isinstance(self._stream_writer[stream_id], UserRelay):
+                self._stream_writer[stream_id].user_close(self)
+            elif not self._stream_writer[stream_id].is_closing():
                 self._stream_writer[stream_id].close()
                 if stream_id in self._stream_writer:
                     task_list.append(self._stream_writer[stream_id])
@@ -362,7 +369,7 @@ class Hxs2Connection():
 
     async def send_data_frame(self, stream_id, data):
         self._stream_context[stream_id].data_sent(len(data))
-        if isinstance(self._stream_writer[stream_id], UDPRelay):
+        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
             self.send_one_data_frame(stream_id, data)
         elif len(data) > 16386 and random.random() < 0.1:
             data = io.BytesIO(data)
@@ -441,6 +448,8 @@ class Hxs2Connection():
             del self._stream_writer[stream_id]
             self.log_access(stream_id)
             try:
+                if isinstance(writer, UserRelay):
+                    return
                 if not writer.is_closing():
                     writer.close()
                 await writer.wait_closed()
@@ -461,7 +470,7 @@ class Hxs2Connection():
             await self._stream_writer[stream_id].drain()
 
     async def async_drain(self, stream_id):
-        if isinstance(self._stream_writer[stream_id], UDPRelay):
+        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
             return
         wbuffer_size = self._stream_writer[stream_id].transport.get_write_buffer_size()
         if wbuffer_size <= REMOTE_WRITE_BUFFER:

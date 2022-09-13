@@ -9,7 +9,7 @@ import asyncio
 import asyncio_dgram
 
 from hxcrypto import Encryptor, InvalidTag, IVError
-
+from hxsocks.udp_relay2 import get_relay2
 
 FULL = 0
 RESTRICTED = 1
@@ -153,13 +153,13 @@ class UDPRelayServer:
     '''
     provide udp relay for shadowsocks
     '''
-    def __init__(self, server, timeout, mode):
+    def __init__(self, server, timeout, udp_mode):
         self.server_addr = server.address
         self.method = server.method
         self.__key = server.psk
         self.proxy = server.proxy
         self.timeout = timeout
-        self.mode = mode
+        self.udp_mode = udp_mode
 
         self.task = None
         self.server_stream = None
@@ -225,7 +225,10 @@ class UDPRelayServer:
         '''
         if client_addr not in self.relay_holder:
             self.logger.debug('start udp_relay %r', client_addr)
-            relay = UDPRelay(self, client_addr[0], client_addr, self.timeout, self.mode)
-            await relay.bind()
-            self.relay_holder[client_addr] = relay
+            if self.udp_mode in (0, 1, 2):
+                relay = UDPRelay(self, client_addr[0], client_addr, self.timeout, self.udp_mode)
+                await relay.bind()
+                self.relay_holder[client_addr] = relay
+            else:
+                self.relay_holder[client_addr] = get_relay2(client_addr[0])
         return self.relay_holder[client_addr]
