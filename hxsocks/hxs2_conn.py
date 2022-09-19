@@ -60,7 +60,6 @@ END_STREAM_FLAG = 1
 HXS2_METHOD = [
     'chacha20-ietf-poly1305',
     'aes-128-gcm',
-    'aes-192-gcm',
     'aes-256-gcm',
 ]
 
