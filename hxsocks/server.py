@@ -36,7 +36,7 @@ from hxsocks.hxs2_conn import Hxs2Connection
 from hxsocks.util import open_connection, parse_hostport
 
 
-DEFAULT_METHOD = 'chacha20-ietf-poly1305'
+DEFAULT_METHOD = 'chacha20-ietf-poly1305'  # for hxsocks2 handshake
 DEFAULT_HASH = 'SHA256'
 MAC_LEN = 16
 CTX = b'hxsocks'
@@ -128,7 +128,7 @@ class HXsocksHandler:
         self.client_address = None
         self.client_reader = None
 
-    async def _read(self, size=None):
+    async def _read(self):
         if self.server.aead:
             _len = await self.client_reader.readexactly(18)
             if not _len:
@@ -139,8 +139,7 @@ class HXsocksHandler:
             if not ct:
                 return b''
         else:
-            size = size or self.bufsize
-            ct = await self.client_reader.read(size)
+            ct = await self.client_reader.read(self.bufsize)
         return self.encryptor.decrypt(ct)
 
     async def read(self, size=None):
@@ -152,7 +151,7 @@ class HXsocksHandler:
             return await self._read()
 
         while len(self._buf) < size:
-            self._buf += (await self._read(size - len(self._buf)))
+            self._buf += await self._read()
         _buf, self._buf = self._buf[:size], self._buf[size:]
         return _buf
 
