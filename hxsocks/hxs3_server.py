@@ -77,7 +77,8 @@ class hxs3_server:
         asyncio.ensure_future(websockets.server.serve(self.handle,
                                                       host=self.address[0],
                                                       port=self.address[1],
-                                                      ping_interval=None,
+                                                      ping_interval=10,
+                                                      ping_timeout=None,
                                                       read_limit=2 ** 18,
                                                       write_limit=2 ** 18,
                                                       ))
@@ -168,7 +169,7 @@ class hxs3_handler:
                 await asyncio.wait_for(fut, timeout)
             except asyncio.TimeoutError:
                 continue
-            except (OSError, RuntimeError):
+            except (OSError, RuntimeError, ConnectionClosed):
                 return
 
     async def handle_connection(self):
@@ -187,7 +188,7 @@ class hxs3_handler:
                     frame_data = self.decrypt_frame(frame_data)
                 except (ValueError, InvalidTag,
                         ConnectionError, ConnectionClosed) as err:
-                    self.logger.debug('read frame_len error: %r', err)
+                    self.logger.debug('read frame error: %r', err)
                     break
                 except asyncio.TimeoutError:
                     if time.monotonic() - self._last_active > self.tcp_timeout * 2:
