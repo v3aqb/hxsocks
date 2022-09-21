@@ -90,17 +90,6 @@ class UserManager:
                 user = self.quick_auth_data[_ts][client_auth]
                 password = self.user_pass[user]
                 break
-            # legacy auth
-            for username, password_ in self.user_pass.items():
-                hash_ = hmac.new(password_.encode(),
-                                 struct.pack('>I', _ts) + client_pkey + username.encode(),
-                                 hashlib.sha256).digest()
-                if compare_digest(hash_, client_auth):
-                    user = username
-                    password = password_
-                    break
-            if user:
-                break
         else:
             raise ValueError('user not found')
 
