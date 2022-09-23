@@ -29,8 +29,9 @@ You may want to install ``python3-uvloop`` to increase performance.
 
 ::
 
+    pip3 install wheel
     pip3 install https://github.com/v3aqb/hxcrypto/archive/master.zip
-    pip3 install https://github.com/v3aqb/hxsocks/archive/stable.zip
+    pip3 install https://github.com/v3aqb/hxsocks/archive/master.zip
 
 update
 ------
