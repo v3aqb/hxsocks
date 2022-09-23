@@ -83,8 +83,12 @@ async def open_connection(addr, port, proxy, nodelay=False):
     if proxy:
         remote_reader, remote_writer = await connect_socks5(addr, port, proxy)
     else:
-        fut = asyncio.open_connection(addr, port, limit=262144, happy_eyeballs_delay=0.25)
-        remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=8)
+        try:
+            fut = asyncio.open_connection(addr, port, limit=262144, happy_eyeballs_delay=0.25)
+            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=8)
+        except TypeError:
+            fut = asyncio.open_connection(addr, port, limit=262144)
+            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=8)
     remote_writer.transport.set_write_buffer_limits(262144)
     if nodelay:
         soc = remote_writer.transport.get_extra_info('socket')
