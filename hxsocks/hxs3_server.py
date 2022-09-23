@@ -1,7 +1,7 @@
 '''
 hxsocks3.py
 
-A not encrypted version of hxsocks2, works on websocket.
+Websocket version of hxsocks2.
 
 '''
 import io
@@ -188,10 +188,13 @@ class hxs3_handler:
                     frame_data = self.decrypt_frame(frame_data)
                 except (ValueError, InvalidTag,
                         ConnectionError, ConnectionClosed) as err:
-                    self.logger.debug('read frame error: %r', err)
+                    self.logger.info('read frame error: %r', err)
                     break
                 except asyncio.TimeoutError:
-                    if time.monotonic() - self._last_active > self.tcp_timeout * 2:
+                    if self._stream_writer:
+                        self.logger.info('TimeoutError, active stream exist, continue')
+                        continue
+                    if time.monotonic() - self._last_active > self.tcp_timeout:
                         self.logger.info('connection idle.')
                         break
                     continue
@@ -426,10 +429,14 @@ class hxs3_handler:
                 await self.close_stream(stream_id)
                 break
             except asyncio.TimeoutError:
-                if time.monotonic() - self._stream_context[stream_id].last_active < self.tcp_timeout and \
-                        self._stream_context[stream_id].stream_status == OPEN:
+                time_since_lastactive = time.monotonic() - self._stream_context[stream_id].last_active
+                if time_since_lastactive < 60:
                     continue
-                data = b''
+                if self._stream_context[stream_id].stream_status == OPEN and \
+                        time_since_lastactive < self.tcp_timeout:
+                    continue
+                await self.close_stream(stream_id)
+                break
 
             if not data:
                 await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id,

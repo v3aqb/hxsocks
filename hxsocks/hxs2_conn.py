@@ -163,8 +163,11 @@ class Hxs2Connection():
                     self.logger.debug('read frame_len error: %r', err)
                     break
                 except asyncio.TimeoutError:
-                    if time.monotonic() - self._last_active > self.tcp_timeout * 2:
-                        self.logger.info('read frame_len timed out.')
+                    if self._stream_writer:
+                        self.logger.debug('TimeoutError, active stream exist, continue')
+                        continue
+                    if time.monotonic() - self._last_active > self.tcp_timeout:
+                        self.logger.info('connection idle.')
                         break
                     continue
 
@@ -401,10 +404,14 @@ class Hxs2Connection():
                 await self.close_stream(stream_id)
                 break
             except asyncio.TimeoutError:
-                if time.monotonic() - self._stream_context[stream_id].last_active < self.tcp_timeout and \
-                        self._stream_context[stream_id].stream_status == OPEN:
+                time_since_lastactive = time.monotonic() - self._stream_context[stream_id].last_active
+                if time_since_lastactive < 60:
                     continue
-                data = b''
+                if self._stream_context[stream_id].stream_status == OPEN and \
+                        time_since_lastactive < self.tcp_timeout:
+                    continue
+                await self.close_stream(stream_id)
+                break
 
             if not data:
                 self.send_frame(HEADERS, END_STREAM_FLAG, stream_id,

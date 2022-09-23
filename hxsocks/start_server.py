@@ -25,6 +25,7 @@ def start_hxs_server(confpath):
     tcp_timeout = cfg.get('tcp_timeout', 600)
     if not isinstance(tcp_timeout, int):
         tcp_timeout = 600
+    tcp_timeout = max(tcp_timeout, 60)
 
     udp_enable = cfg.get('udp_enable', False)
     if udp_enable and not UDPRelayServer:
@@ -43,6 +44,7 @@ def start_hxs_server(confpath):
     udp_timeout = cfg.get('udp_timeout', 600)
     if not isinstance(udp_timeout, int):
         udp_timeout = 600
+    udp_timeout = max(udp_timeout, 60)
 
     udp_mode = cfg.get('udp_mode', 3)
     # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric

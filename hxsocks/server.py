@@ -344,12 +344,14 @@ class HXsocksHandler:
                 data = await asyncio.wait_for(fut, timeout=6)
                 context.last_active = time.time()
             except asyncio.TimeoutError:
-                if time.time() - context.last_active > self.tcp_timeout or context.remote_eof:
-                    data = b''
-                else:
-                    continue
+                idle_time = time.monotonic() - context.last_active
+                if context.local_eof and idle_time > 60:
+                    break
+                if idle_time > self.tcp_timeout:
+                    break
+                continue
             except (BufEmptyError, asyncio.IncompleteReadError, InvalidTag, ConnectionError):
-                data = b''
+                break
 
             if not data:
                 break
@@ -372,14 +374,16 @@ class HXsocksHandler:
             try:
                 fut = read_from.read(self.bufsize)
                 data = await asyncio.wait_for(fut, timeout=6)
-                context.last_active = time.time()
+                context.last_active = time.monotonic()
             except asyncio.TimeoutError:
-                if time.time() - context.last_active > self.tcp_timeout or context.local_eof:
-                    data = b''
-                else:
-                    continue
+                idle_time = time.monotonic() - context.last_active
+                if context.local_eof and idle_time > 60:
+                    break
+                if idle_time > self.tcp_timeout:
+                    break
+                continue
             except ConnectionError:
-                data = b''
+                break
 
             if not data:
                 break
