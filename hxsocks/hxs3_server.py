@@ -302,6 +302,7 @@ class hxs3_handler:
                 break
         self._connection_lost = True
         # exit loop, close all streams...
+        await self.websocket.close()
         self.logger.info('recv from hxs2 connect ended')
 
         task_list = []
