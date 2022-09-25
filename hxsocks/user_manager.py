@@ -40,7 +40,7 @@ class porn_filter:
 class UserManager:
     def __init__(self, server_cert, limit=20):
         '''server_cert: path to server_cert'''
-        self.SERVER_CERT = ECC(from_file=server_cert)
+        self.server_cert = ECC(from_file=server_cert)
         self._limit = limit
         self.user_pass = {}
         self.user_tag = {}
@@ -111,10 +111,10 @@ class UserManager:
         xpubkey = ecc.get_pub_key()
 
         hash_ = hmac.new(password.encode(), client_pkey + xpubkey + user.encode(), hashlib.sha256).digest()
-        scert = self.SERVER_CERT.get_pub_key()
-        signature = self.SERVER_CERT.sign(hash_, 'SHA256')
+        scert = self.server_cert.get_pub_key()
+        signature = self.server_cert.sign(hash_, 'SHA256')
         reply = b''.join([
-            bytes((0, len(xpubkey), len(scert), len(signature))),
+            struct.pack(b'!BBBB', 0, len(xpubkey), len(scert), len(signature)),
             xpubkey,
             hash_,
             scert,

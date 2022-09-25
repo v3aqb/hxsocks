@@ -59,7 +59,7 @@ def start_hxs_server(confpath):
         ECC(key_len=32).save(cert_path)
 
     user_mgr = UserManager(cert_path, conn_limit)
-    cert = user_mgr.SERVER_CERT.get_pub_key()
+    cert = user_mgr.server_cert.get_pub_key()
     cert_hash = hashlib.sha256(cert).hexdigest()[:8]
     sys.stderr.write('load server cert %s\n' % cert_hash)
 

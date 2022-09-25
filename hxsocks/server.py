@@ -44,7 +44,7 @@ CTX = b'hxsocks'
 
 class ForwardContext:
     def __init__(self):
-        self.last_active = time.time()
+        self.last_active = time.monotonic()
         # eof recieved
         self.remote_eof = False
         self.local_eof = False
@@ -131,16 +131,12 @@ class HXsocksHandler:
     async def _read(self):
         if self.server.aead:
             _len = await self.client_reader.readexactly(18)
-            if not _len:
-                return b''
             _len = self.encryptor.decrypt(_len)
             _len, = struct.unpack("!H", _len)
-            ct = await self.client_reader.readexactly(_len + 16)
-            if not ct:
-                return b''
+            ct_ = await self.client_reader.readexactly(_len + 16)
         else:
-            ct = await self.client_reader.read(self.bufsize)
-        return self.encryptor.decrypt(ct)
+            ct_ = await self.client_reader.read(self.bufsize)
+        return self.encryptor.decrypt(ct_)
 
     async def read(self, size=None):
         # compatible with shadowsocks aead
@@ -167,7 +163,7 @@ class HXsocksHandler:
             client_writer.close()
         try:
             await client_writer.wait_closed()
-        except ConnectionError:
+        except OSError:
             pass
 
     async def _handle(self, client_reader, client_writer):
@@ -342,7 +338,7 @@ class HXsocksHandler:
             try:
                 fut = self.read()
                 data = await asyncio.wait_for(fut, timeout=6)
-                context.last_active = time.time()
+                context.last_active = time.monotonic()
             except asyncio.TimeoutError:
                 idle_time = time.monotonic() - context.last_active
                 if context.local_eof and idle_time > 60:
@@ -350,7 +346,7 @@ class HXsocksHandler:
                 if idle_time > self.tcp_timeout:
                     break
                 continue
-            except (BufEmptyError, asyncio.IncompleteReadError, InvalidTag, ConnectionError):
+            except (BufEmptyError, asyncio.IncompleteReadError, InvalidTag, OSError):
                 break
 
             if not data:
@@ -382,7 +378,7 @@ class HXsocksHandler:
                 if idle_time > self.tcp_timeout:
                     break
                 continue
-            except ConnectionError:
+            except OSError:
                 break
 
             if not data:

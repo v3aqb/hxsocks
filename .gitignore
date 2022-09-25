@@ -54,3 +54,4 @@ docs/_build/
 /config.json
 /config.yaml
 /cert.pem
+*.yaml
