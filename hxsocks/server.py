@@ -23,7 +23,6 @@ import struct
 import logging
 import io
 import time
-import traceback
 import urllib.parse
 import random
 import hashlib
@@ -35,6 +34,8 @@ from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
 from hxsocks.hxs2_conn import Hxs2Connection
 from hxsocks.util import open_connection, parse_hostport
 
+SS_SUBKEY = "ss-subkey"
+SS_SUBKEY_2022 = 'shadowsocks 2022 session subkey'
 
 DEFAULT_METHOD = 'chacha20-ietf-poly1305'  # for hxsocks2 handshake
 DEFAULT_HASH = 'SHA256'
@@ -157,8 +158,10 @@ class HXsocksHandler:
             soc = client_writer.transport.get_extra_info('socket')
             soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-        await self._handle(client_reader, client_writer)
-
+        try:
+            await self._handle(client_reader, client_writer)
+        except Exception as err:
+            self.logger.error('_handle error %r', err, exc_info=True)
         if not client_writer.is_closing():
             client_writer.close()
         try:
@@ -166,51 +169,77 @@ class HXsocksHandler:
         except OSError:
             pass
 
+    async def read_request_headers(self):
+        if self.server.method.startswith('2022'):
+            fix_len_header = await self.client_reader.readexactly(self.encryptor.iv_len + 11 + 16)
+            fix_len_header = self.encryptor.decrypt(fix_len_header)
+            type_, timestamp, length = struct.unpack('!BQH', fix_len_header)
+            if type_ != 0:
+                raise ValueError('header_type=1, except 0')
+            diff = time.time() - timestamp
+            if abs(diff) > 30:
+                raise ValueError('timestamp error, diff: %.4f' % diff)
+            header = await self.client_reader.readexactly(length + 16)
+        elif self.server.aead:
+            _len = await self.client_reader.readexactly(self.encryptor.iv_len + 18)
+            _len = self.encryptor.decrypt(_len)
+            _len, = struct.unpack("!H", _len)
+            header = await self.client_reader.readexactly(_len + 16)
+        else:
+            # stream cipher
+            header = await self.client_reader.read(self.bufsize)
+        header = self.encryptor.decrypt(header)
+        header = io.BytesIO(header)
+        addr_type = header.read(1)[0]
+        if addr_type in (1, 3, 4):
+            if addr_type == 1:
+                addr = header.read(4)
+                addr = socket.inet_ntoa(addr)
+            elif addr_type == 3:
+                data = header.read(1)
+                addr = header.read(data[0])
+                addr = addr.decode('ascii')
+            elif addr_type == 4:
+                data = header.read(16)
+                addr = socket.inet_ntop(socket.AF_INET6, data)
+            port = header.read(2)
+            port, = struct.unpack('>H', port)
+            if self.encryptor.ctx == SS_SUBKEY_2022:
+                padding_len = header.read(2)
+                padding_len, = struct.unpack('>H', padding_len)
+                header.read(padding_len)
+        else:
+            addr = ''
+            port = 0
+        return addr_type, addr, port, header
+
     async def _handle(self, client_reader, client_writer):
         self.client_address = client_writer.get_extra_info('peername')
         self.client_reader = client_reader
         self.logger.debug('incoming connection %s', self.client_address)
 
-        # read iv
         try:
-            fut = self.client_reader.readexactly(self.encryptor.iv_len)
-            iv_ = await asyncio.wait_for(fut, timeout=10)
-            self.encryptor.decrypt(iv_)
-        except IVError:
-            self.logger.error('iv reused, %s', self.client_address)
+            addr_type, addr, port, payload = await self.read_request_headers()
+        except (IVError, InvalidTag, ValueError) as err:
+            self.logger.error('read request header error, %s %r', self.client_address, err)
             await self.play_dead()
             return
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError):
-            self.logger.debug('iv read failed, %s', self.client_address)
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as err:
+            self.logger.warning('read request header error, %s, %r', self.client_address, err)
             return
 
-        # read cmd
-        try:
-            fut = self.read(1)
-            cmd = await asyncio.wait_for(fut, timeout=10)
-        except asyncio.TimeoutError:
-            self.logger.debug('read cmd timed out. %s', self.client_address)
-            return
-        except (ConnectionError, asyncio.IncompleteReadError):
-            self.logger.debug('read cmd reset. %s', self.client_address)
-            return
-        except InvalidTag:
-            self.logger.error('InvalidTag while read cmd. %s', self.client_address)
-            await self.play_dead()
-            return
-        cmd = cmd[0]
-        self.logger.debug('cmd: %s %s', cmd, self.client_address)
+        self.logger.debug('addr_type: %s %s', addr_type, self.client_address)
 
-        if cmd in (1, 3, 4):
+        if addr_type in (1, 3, 4):
             # A shadowsocks request
-            result = await self.handle_ss(client_writer, addr_type=cmd)
+            result = await self.handle_ss(client_writer, addr, port, payload)
             if result:
                 await self.play_dead()
             return
-        if cmd == 20:  # hxsocks2 client key exchange
-            req_len = await self.read(2)
+        if addr_type == 20:  # hxsocks2 client key exchange
+            req_len = payload.read(2)
             req_len, = struct.unpack('>H', req_len)
-            data = await self.read(req_len)
+            data = payload.read(req_len)
             data = io.BytesIO(data)
 
             pklen = data.read(1)[0]
@@ -228,7 +257,7 @@ class HXsocksHandler:
 
             reply = reply + bytes((mode, )) + bytes(random.randint(64, 2048))
             reply = struct.pack('>H', len(reply)) + reply
-            client_writer.write(self.encryptor.encrypt(reply))
+            client_writer.write(self.encryptor.encrypt(reply, role=1))
 
             conn = Hxs2Connection(client_reader,
                                   client_writer,
@@ -251,7 +280,7 @@ class HXsocksHandler:
             return
 
         # TODO: security log
-        self.logger.error('bad cmd: %s, %s', cmd, self.client_address)
+        self.logger.error('bad addr_type: %s, %s', addr_type, self.client_address)
         await self.play_dead()
         return
 
@@ -267,31 +296,10 @@ class HXsocksHandler:
             except OSError:
                 return
 
-    async def handle_ss(self, client_writer, addr_type):
+    async def handle_ss(self, client_writer, addr, port, payload):
         # if error, return 1
-        # get header...
         if not self.server.ss_enable:
             return True
-        try:
-            if addr_type == 1:
-                addr = await self.read(4)
-                addr = socket.inet_ntoa(addr)
-            elif addr_type == 3:
-                data = await self.read(1)
-                addr = await self.read(data[0])
-                addr = addr.decode('ascii')
-            elif addr_type == 4:
-                data = await self.read(16)
-                addr = socket.inet_ntop(socket.AF_INET6, data)
-            else:
-                raise ValueError('bad addr_type')
-            port = await self.read(2)
-            port, = struct.unpack('>H', port)
-        except Exception as err:
-            self.logger.error('error on read ss header: %s %s', err, self.client_address)
-            self.logger.error(traceback.format_exc())
-            return 1
-
         # access control
         try:
             self.user_mgr.user_access_ctrl(self.address[1], addr, self.client_address, self.__key)
@@ -314,10 +322,13 @@ class HXsocksHandler:
         # forward
         context = ForwardContext()
 
+        payload = payload.read()
+        if payload:
+            remote_writer.write(payload)
+
         tasks = [asyncio.create_task(self.ss_forward_a(remote_writer, context)),
                  asyncio.create_task(self.ss_forward_b(remote_reader,
                                                        client_writer,
-                                                       self.encryptor.encrypt,
                                                        context)),
                  ]
         await asyncio.wait(tasks)
@@ -364,7 +375,7 @@ class HXsocksHandler:
         except OSError:
             pass
 
-    async def ss_forward_b(self, read_from, write_to, cipher, context):
+    async def ss_forward_b(self, read_from, write_to, context):
         # data from remote, encrypt, sent to client
         while True:
             try:
@@ -386,7 +397,7 @@ class HXsocksHandler:
 
             context.traffic_from_remote += len(data)
 
-            data = cipher(data)
+            data = self.encryptor.encrypt(data, role=1)
             try:
                 write_to.write(data)
                 await write_to.drain()

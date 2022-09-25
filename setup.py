@@ -14,7 +14,7 @@ setup(
             'hxsocks = hxsocks.__main__:main'
         ]
     },
-    dependency_links=['https://github.com/v3aqb/hxcrypto/archive/master.zip#egg=hxcrypto-0.0.3'],
+    dependency_links=['https://github.com/v3aqb/hxcrypto/archive/master.zip#egg=hxcrypto-0.0.4'],
     install_requires=["hxcrypto", "pyyaml", "asyncio-dgram", "websockets"],
     classifiers=[
         'License :: OSI Approved :: GNU General Public License v3 (GPLv3)',

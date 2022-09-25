@@ -33,7 +33,7 @@ from hxsocks.udp_relay import UDPRelay, parse_dgram
 from hxsocks.udp_relay2 import get_relay2, UserRelay
 
 
-CTX = b'hxsocks2'
+CTX = 'hxsocks2'
 
 OPEN = 0
 EOF_SENT = 1   # SENT END_STREAM

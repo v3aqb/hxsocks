@@ -77,6 +77,8 @@ def start_hxs_server(confpath):
             if udp_enable:
                 if isinstance(udp_enable, list) and server_.address[1] not in udp_enable:
                     continue
+                if server_.method.startswith('2022'):
+                    continue
                 udp_server = UDPRelayServer(server_, udp_timeout, udp_mode)
                 udp_server.start()
                 server_list.append(udp_server)
