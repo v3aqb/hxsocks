@@ -9,9 +9,7 @@ import hashlib
 import logging
 import random
 import struct
-import socket
 import time
-import traceback
 import urllib.parse
 
 import asyncio
@@ -19,15 +17,10 @@ import asyncio
 import websockets.server
 from websockets.exceptions import ConnectionClosed
 
-from hxcrypto import InvalidTag, AEncryptor
-from hxcrypto.encrypt import EncryptorStream
-from hxsocks.util import open_connection, parse_hostport
-from hxsocks.hxs2_conn import ForwardContext, HXS2_METHOD
-from hxsocks.udp_relay import UDPRelay, parse_dgram
-from hxsocks.udp_relay2 import get_relay2, UserRelay
+from hxcrypto import InvalidTag
 
-
-CTX = b'hxsocks2'
+from hxsocks.util import parse_hostport
+from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
 
 OPEN = 0
 EOF_SENT = 1   # SENT END_STREAM
@@ -64,7 +57,8 @@ class hxs3_server:
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
         hdr.setFormatter(formatter)
         self.logger.addHandler(hdr)
-        self.proxy = query.get('proxy', [''])[0]
+        proxy = query.get('proxy', [''])[0]
+        self.proxy = parse_hostport(proxy) if proxy else None
         self.tcp_timeout = tcp_timeout
         self.udp_timeout = udp_timeout
         self.udp_mode = udp_mode
@@ -88,35 +82,21 @@ class hxs3_server:
         await handler.handle(websocket, path)
 
 
-class hxs3_handler:
-    bufsize = 65535 - 22
+class hxs3_handler(HxsCommon):
 
     def __init__(self, server):
+        super().__init__()
         self.logger = server.logger
         self.user_mgr = server.user_mgr
-        self.address = server.address
         self.server_addr = server.address
         self._proxy = server.proxy
-        self.websocket = None
-        self.client_address = None
-        self._connection_lost = False
-        self.__cipher = None
-        self.__skey = None
-        self._mode = 0
-        self.user = None
 
         self.tcp_timeout = server.tcp_timeout
         self.udp_timeout = server.udp_timeout
         self.udp_mode = server.udp_mode
-        self._init_time = time.monotonic()
-        self._last_active = self._init_time
-        self._gone = False
-        self._next_stream_id = 1
-        self._settings_async_drain = False
+        self._tcp_nodelay = True
 
-        self._stream_writer = {}
-        self._stream_task = {}
-        self._stream_context = {}
+        self.websocket = None
 
     async def handle(self, websocket, path):
         self.websocket = websocket
@@ -144,7 +124,7 @@ class hxs3_handler:
         self._mode = data.read(1)[0]
 
         try:
-            client, reply, self.__skey = self.user_mgr.hxs2_auth(client_pkey, client_auth)
+            client, reply, self._skey = self.user_mgr.hxs2_auth(client_pkey, client_auth)
             self.logger.info('new key exchange. client: %s %s', client, self.client_address)
             self.user = client
         except ValueError as err:
@@ -158,6 +138,7 @@ class hxs3_handler:
         await self.handle_connection()
         client_pkey = hashlib.md5(client_pkey).digest()
         self.user_mgr.del_key(client_pkey)
+        await self.websocket.close()
         return
 
     async def play_dead(self):
@@ -172,212 +153,14 @@ class hxs3_handler:
             except (OSError, RuntimeError, ConnectionClosed):
                 return
 
-    async def handle_connection(self):
-        self.logger.debug('start recieving frames...')
-
-        user = '%s:%s' % (self.client_address[0], self.user)
-        while not self._connection_lost:
-            try:
-                if self._gone and not self._stream_writer:
-                    break
-
-                try:
-                    fut = self.websocket.recv()
-                    # chunk size shoule be smaller than 32kB
-                    frame_data = await asyncio.wait_for(fut, timeout=30)
-                    frame_data = self.decrypt_frame(frame_data)
-                except (ValueError, InvalidTag,
-                        ConnectionError, ConnectionClosed) as err:
-                    self.logger.info('read frame error: %r', err)
-                    break
-                except asyncio.TimeoutError:
-                    if self._stream_writer:
-                        self.logger.info('TimeoutError, active stream exist, continue')
-                        continue
-                    if time.monotonic() - self._last_active > self.tcp_timeout:
-                        self.logger.info('connection idle.')
-                        break
-                    continue
-
-                # parse chunk_data
-                # +------+-------------------+----------+
-                # | type | flags | stream_id | payload  |
-                # +------+-------------------+----------+
-                # |  1   |   1   |     2     | Variable |
-                # +------+-------------------+----------+
-                frame_data = io.BytesIO(frame_data)
-                header = frame_data.read(4)
-                frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
-
-                if frame_type in (DATA, HEADERS, UDP_ASSOCIATE):
-                    self._last_active = time.monotonic()
-
-                self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
-                if frame_type == DATA:  # 0
-                    # check if remote socket writable
-                    if self._stream_context[stream_id].stream_status & EOF_RECV:
-                        self.logger.warning('data recv while stream closed. sid %d', stream_id)
-                        continue
-                    # first 2 bytes of payload indicates data_len
-                    data_len, = struct.unpack('>H', frame_data.read(2))
-                    data = frame_data.read(data_len)
-                    if len(data) != data_len:
-                        # something went wrong, destory connection
-                        self.logger.error('data_len mismatch')
-                        break
-                    # sent data to stream
-                    try:
-                        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
-                            addr, dgram = parse_dgram(data)
-                            await self._stream_writer[stream_id].send_dgram(addr, dgram, self, stream_id)
-                        else:
-                            self._stream_writer[stream_id].write(data)
-                            await self.stream_writer_drain(stream_id)
-                        self._stream_context[stream_id].data_recv(len(data))
-                    except ConnectionError:
-                        # remote closed, reset stream
-                        self.logger.info('close_stream %d', stream_id)
-                        asyncio.ensure_future(self.close_stream(stream_id))
-                elif frame_type == HEADERS:  # 1
-                    if self._next_stream_id == stream_id:
-                        # open new stream
-                        self._next_stream_id += 1
-
-                        host_len = frame_data.read(1)[0]
-                        host = frame_data.read(host_len).decode('ascii')
-                        port, = struct.unpack('>H', frame_data.read(2))
-                        # rest of the payload is discarded
-                        asyncio.ensure_future(self.create_connection(stream_id, host, port))
-
-                    elif stream_id < self._next_stream_id:
-                        self.logger.debug('sid %s END_STREAM. status %s',
-                                          stream_id,
-                                          self._stream_context[stream_id].stream_status)
-                        if frame_flags & END_STREAM_FLAG:
-                            self._stream_context[stream_id].stream_status |= EOF_RECV
-                            if stream_id in self._stream_writer:
-                                try:
-                                    self._stream_writer[stream_id].write_eof()
-                                except OSError:
-                                    self._stream_context[stream_id].stream_status = CLOSED
-                            if self._stream_context[stream_id].stream_status == CLOSED:
-                                asyncio.ensure_future(self.close_stream(stream_id))
-                    else:
-                        self.logger.error('frame_type == HEADERS, wrong stream_id!')
-                elif frame_type == RST_STREAM:  # 3
-                    asyncio.ensure_future(self.close_stream(stream_id))
-                elif frame_type == SETTINGS:
-                    if stream_id == 1:
-                        self._settings_async_drain = True
-                        await self.send_frame(SETTINGS, 0, 1, bytes(random.randint(64, 256)))
-                elif frame_type == PING:  # 6
-                    if frame_flags == 0:
-                        await self.send_frame(PING, PONG, 0, bytes(random.randint(64, 256)))
-                elif frame_type == GOAWAY:  # 7
-                    # GOAWAY
-                    # no more new stream
-                    # make no sense when client sending this...
-                    self._gone = True
-                elif frame_type == WINDOW_UPDATE:  # 8
-                    if frame_flags == 1:
-                        self._stream_context[stream_id].resume_reading.clear()
-                    else:
-                        self._stream_context[stream_id].resume_reading.set()
-                elif frame_type == UDP_ASSOCIATE:  # 20
-                    if stream_id == 0:
-                        await self.send_frame(UDP_ASSOCIATE, OPEN, 0, bytes(random.randint(64, 256)))
-                    elif stream_id == self._next_stream_id:
-                        self._next_stream_id += 1
-                        # get a udp relay
-                        if self.udp_mode in (0, 1, 2):
-                            relay = UDPRelay(self, user, stream_id, self.udp_timeout, self.udp_mode)
-                            await relay.bind()
-                            self._stream_writer[stream_id] = relay
-                        else:
-                            self._stream_writer[stream_id] = get_relay2(user)
-                        self._stream_context[stream_id] = ForwardContext('udp', self.logger)
-            except Exception as err:
-                self.logger.error('read from connection error: %r', err)
-                self.logger.error(traceback.format_exc())
-                break
-        self._connection_lost = True
-        # exit loop, close all streams...
-        await self.websocket.close()
-        self.logger.info('recv from hxs2 connect ended')
-
-        task_list = []
-        for stream_id in self._stream_writer:
-            self._stream_context[stream_id].stream_status = CLOSED
-            if isinstance(self._stream_writer[stream_id], UserRelay):
-                self._stream_writer[stream_id].user_close(self)
-            elif not self._stream_writer[stream_id].is_closing():
-                self._stream_writer[stream_id].close()
-                if stream_id in self._stream_writer:
-                    task_list.append(self._stream_writer[stream_id])
-
-        self._stream_writer = {}
-        task_list = [asyncio.create_task(w.wait_closed()) for w in task_list]
-        if task_list:
-            await asyncio.wait(task_list)
-        return self._next_stream_id == 1
-
-    async def create_connection(self, stream_id, host, port):
-        self.logger.info('connecting %s:%s %s %s', host, port, self.user, self.client_address)
-        timelog = time.monotonic()
-
+    async def read_frame(self, timeout=30):
         try:
-            self.user_mgr.user_access_ctrl(self.address[1], host, self.client_address, self.user)
-            reader, writer = await open_connection(host, port, self._proxy, True)
-            writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
-        except (OSError, asyncio.TimeoutError, socket.gaierror) as err:
-            # tell client request failed.
-            self.logger.error('connect %s:%s failed: %r', host, port, err)
-            data = b'\x01' * random.randint(64, 256)
-            await self.send_frame(RST_STREAM, 0, stream_id, data)
-        else:
-            # tell client request success, header frame, first byte is \x00
-            timelog = time.monotonic() - timelog
-            if timelog > 1:
-                self.logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
-            # client may reset the connection
-            # TODO: maybe keep this connection for later?
-            if stream_id in self._stream_context and \
-                    self._stream_context[stream_id].stream_status == CLOSED:
-                writer.close()
-                return
-            data = bytes(random.randint(64, 256))
-            # registor stream
-            self._stream_writer[stream_id] = writer
-            self._stream_context[stream_id] = ForwardContext(host, self.logger)
-            # start forward from remote_reader to client_writer
-            await self.send_frame(HEADERS, OPEN, stream_id, data)
-            task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
-            self._stream_task[stream_id] = task
-
-    def decrypt_frame(self, frame_data):
-        if self.__cipher:
-            frame_data = self.__cipher.decrypt(frame_data)
-        else:
-            error = None
-            if self._mode == 1:
-                self.bufsize += 16
-                self.__cipher = EncryptorStream(self.__skey, 'rc4-md5', check_iv=False)
-                self.__skey = None
-                frame_data = self.__cipher.decrypt(frame_data)
-                return frame_data
-            for method in HXS2_METHOD:
-                try:
-                    cipher = AEncryptor(self.__skey, method, CTX, check_iv=False)
-                    frame_data = cipher.decrypt(frame_data)
-                    self.__cipher = cipher
-                    self.__skey = None
-                    break
-                except InvalidTag as err:
-                    error = err
-                    continue
-            else:
-                raise error
-        return frame_data
+            fut = self.websocket.recv()
+            frame_data = await asyncio.wait_for(fut, timeout=timeout)
+            frame_data = self.decrypt_frame(frame_data)
+            return frame_data
+        except (ConnectionClosed, RuntimeError, InvalidTag) as err:
+            raise ReadFrameError(err) from err
 
     async def send_frame(self, type_, flags, stream_id, payload):
         self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
@@ -388,135 +171,9 @@ class hxs3_handler:
 
         header = struct.pack('>BBH', type_, flags, stream_id)
         data = header + payload
-        ct_ = self.__cipher.encrypt(data)
+        ct_ = self._cipher.encrypt(data)
         try:
             await self.websocket.send(ct_)
         except ConnectionClosed:
             self._connection_lost = True
-
-    async def send_one_data_frame(self, stream_id, data):
-        payload = struct.pack('>H', len(data)) + data
-        diff = self.bufsize - len(data)
-        payload += bytes(random.randint(min(diff, 8), min(diff, 255)))
-        await self.send_frame(DATA, 0, stream_id, payload)
-
-    async def send_data_frame(self, stream_id, data):
-        self._stream_context[stream_id].data_sent(len(data))
-        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
-            await self.send_one_data_frame(stream_id, data)
-        elif len(data) > 16386 and random.random() < 0.1:
-            data = io.BytesIO(data)
-            data_ = data.read(random.randint(256, 16386 - 22))
-            while data_:
-                await self.send_one_data_frame(stream_id, data_)
-                if random.random() < 0.2:
-                    await self.send_frame(PING, 0, 0, bytes(random.randint(256, 1024)))
-                data_ = data.read(random.randint(256, 8192 - 22))
-                await asyncio.sleep(0)
-        else:
-            await self.send_one_data_frame(stream_id, data)
-
-    async def on_remote_recv(self, stream_id, data, remote_addr):
-        await self.send_data_frame(stream_id, data)
-
-    async def read_from_remote(self, stream_id, remote_reader):
-        self.logger.debug('start read from stream')
-        while True:
-            await self._stream_context[stream_id].resume_reading.wait()
-            fut = remote_reader.read(self.bufsize)
-            try:
-                data = await asyncio.wait_for(fut, timeout=6)
-            except OSError:
-                await self.close_stream(stream_id)
-                break
-            except asyncio.TimeoutError:
-                time_since_lastactive = time.monotonic() - self._stream_context[stream_id].last_active
-                if time_since_lastactive < 60:
-                    continue
-                if self._stream_context[stream_id].stream_status == OPEN and \
-                        time_since_lastactive < self.tcp_timeout:
-                    continue
-                await self.close_stream(stream_id)
-                break
-
-            if not data:
-                await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id,
-                                      bytes(random.randint(8, 256)))
-                self._stream_context[stream_id].stream_status |= EOF_SENT
-                if self._stream_context[stream_id].stream_status == CLOSED:
-                    await self.close_stream(stream_id)
-                break
-            if self._stream_context[stream_id].stream_status & EOF_SENT:
-                break
-            if self._stream_context[stream_id].is_heavy():
-                await asyncio.sleep(0)
-            await self.send_data_frame(stream_id, data)
-
-        self.logger.debug('sid %s read_from_remote end. status %s',
-                          stream_id,
-                          self._stream_context[stream_id].stream_status)
-
-        while time.monotonic() - self._stream_context[stream_id].last_active < 12:
-            await asyncio.sleep(6)
-        await self.close_stream(stream_id)
-
-    def log_access(self, stream_id):
-        traffic = (self._stream_context[stream_id].traffic_from_client,
-                   self._stream_context[stream_id].traffic_from_remote)
-        self.user_mgr.user_access_log(self.address[1],
-                                      self._stream_context[stream_id].host,
-                                      traffic,
-                                      self.client_address,
-                                      self.user)
-
-    async def close_stream(self, stream_id):
-        if not self._stream_context[stream_id].resume_reading.is_set():
-            self._stream_context[stream_id].resume_reading.set()
-        if self._stream_context[stream_id].stream_status != CLOSED:
-            await self.send_frame(RST_STREAM, 0, stream_id, bytes(random.randint(64, 256)))
-            self._stream_context[stream_id].stream_status = CLOSED
-        if stream_id in self._stream_writer:
-            writer = self._stream_writer[stream_id]
-            del self._stream_writer[stream_id]
-            self.log_access(stream_id)
-            try:
-                if isinstance(writer, UserRelay):
-                    return
-                if not writer.is_closing():
-                    writer.close()
-                await writer.wait_closed()
-            except OSError:
-                pass
-
-    def close_relay(self, stream_id):
-        if self._stream_context[stream_id].stream_status == OPEN:
-            self._stream_context[stream_id].stream_status = CLOSED
-            asyncio.ensure_future(self.send_frame(RST_STREAM, 0, stream_id, bytes(random.randint(64, 256))))
-        if stream_id in self._stream_writer:
-            del self._stream_writer[stream_id]
-
-    async def stream_writer_drain(self, stream_id):
-        if self._settings_async_drain:
-            asyncio.ensure_future(self.async_drain(stream_id))
-        else:
-            await self._stream_writer[stream_id].drain()
-
-    async def async_drain(self, stream_id):
-        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
-            return
-        wbuffer_size = self._stream_writer[stream_id].transport.get_write_buffer_size()
-        if wbuffer_size <= REMOTE_WRITE_BUFFER:
-            return
-        if wbuffer_size > REMOTE_WRITE_BUFFER * 16:
-            self.logger.error('wbuffer_size > REMOTE_WRITE_BUFFER * 16')
-
-        with self._stream_context[stream_id].drain_lock:
-            try:
-                # tell client to stop reading
-                await self.send_frame(WINDOW_UPDATE, 1, stream_id, bytes(random.randint(64, 256)))
-                await self._stream_writer[stream_id].drain()
-                # tell client to resume reading
-                await self.send_frame(WINDOW_UPDATE, 0, stream_id, bytes(random.randint(64, 256)))
-            except OSError:
-                await self.close_stream(stream_id)
-                return
+            raise
