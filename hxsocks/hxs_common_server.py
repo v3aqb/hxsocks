@@ -110,7 +110,8 @@ class HxsCommon:
         self.user_mgr = None
         self.server_addr = None
         self.client_address = None
-        self.user = None
+        self.user = 'user'
+        self.udp_uid = 'udp_uid'
 
         self._init_time = time.monotonic()
         self._last_active = self._init_time
@@ -151,7 +152,7 @@ class HxsCommon:
     async def handle_connection(self):
         self.logger.debug('start recieving frames...')
 
-        user = '%s:%s' % (self.client_address[0], self.user)
+        self.udp_uid = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
             try:
                 if self._gone and not self._stream_writer:
@@ -262,11 +263,11 @@ class HxsCommon:
                         self._next_stream_id += 1
                         # get a udp relay
                         if self.udp_mode in (0, 1, 2):
-                            relay = UDPRelay(self, user, stream_id, self.udp_timeout, self.udp_mode)
+                            relay = UDPRelay(self, self.udp_uid, stream_id, self.udp_timeout, self.udp_mode)
                             await relay.bind()
                             self._stream_writer[stream_id] = relay
                         else:
-                            self._stream_writer[stream_id] = get_relay2(user)
+                            self._stream_writer[stream_id] = get_relay2(self.udp_uid)
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err, exc_info=True)
@@ -345,7 +346,7 @@ class HxsCommon:
         else:
             await self.send_one_data_frame(stream_id, data)
 
-    async def on_remote_recv(self, stream_id, data, remote_addr):
+    async def on_remote_recv(self, stream_id, data):
         await self.send_data_frame(stream_id, data)
 
     async def read_from_remote(self, stream_id, remote_reader):

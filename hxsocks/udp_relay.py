@@ -43,7 +43,7 @@ class UDPRelay:
         self._recv_task = asyncio.ensure_future(self.recv_from_remote())
         return self.remote_stream.sockname
 
-    async def send_dgram(self, addr, dgram, callback, callback_addr):
+    async def send_dgram(self, addr, dgram, _, __):
         addr, port = addr
         await self.send(addr, port, dgram)
 
@@ -105,7 +105,7 @@ class UDPRelay:
             buf += struct.pack(b'>H', port)
             buf += dgram
             try:
-                await self.parent.on_remote_recv(self.stream_id, buf, remote_addr)
+                await self.parent.on_remote_recv(self.stream_id, buf)
             except KeyError:
                 self.logger.error('KeyError on parent.on_remote_recv')
                 break
@@ -194,7 +194,7 @@ class UDPRelayServer:
         addr, dgram = parse_dgram(data)
         await relay.send_dgram(addr, dgram, self, client_addr)
 
-    async def on_remote_recv(self, client_addr, data, remote_addr):
+    async def on_remote_recv(self, client_addr, data):
         '''
             remote_addr encoded in data, as shadowsocks format
             create dgram, encrypt and send to client

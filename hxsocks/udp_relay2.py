@@ -234,7 +234,7 @@ class UDPRelay:
             buf += struct.pack(b'>H', port)
             buf += dgram
             callback, callback_addr = self.callback_info[remote_addr]
-            await callback.on_remote_recv(callback_addr, buf, remote_addr)
+            await callback.on_remote_recv(callback_addr, buf)
         self.logger.info('udp_relay end, %s, %ds', self.remote_stream.sockname, int(time.monotonic() - self.init_time))
         self.logger.info('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
