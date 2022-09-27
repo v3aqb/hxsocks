@@ -46,22 +46,20 @@ END_STREAM_FLAG = 1
 
 
 class hxs3_server:
-    def __init__(self, server, user_mgr, log_level, tcp_timeout=120, udp_timeout=300, udp_mode=2):
+    def __init__(self, server, user_mgr, settings):
         parse = urllib.parse.urlparse(server)
         query = urllib.parse.parse_qs(parse.query)
         self.address = parse_hostport(parse.netloc)
         self.user_mgr = user_mgr
+        self.settings = settings
         self.logger = logging.getLogger('hxs3_%d' % self.address[1])
-        self.logger.setLevel(log_level)
+        self.logger.setLevel(settings.log_level)
         hdr = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
         hdr.setFormatter(formatter)
         self.logger.addHandler(hdr)
         proxy = query.get('proxy', [''])[0]
         self.proxy = parse_hostport(proxy) if proxy else None
-        self.tcp_timeout = tcp_timeout
-        self.udp_timeout = udp_timeout
-        self.udp_mode = udp_mode
 
         self.handller_class = hxs3_handler
         self.server = None
@@ -91,10 +89,7 @@ class hxs3_handler(HxsCommon):
         self.server_addr = server.address
         self._proxy = server.proxy
 
-        self.tcp_timeout = server.tcp_timeout
-        self.udp_timeout = server.udp_timeout
-        self.udp_mode = server.udp_mode
-        self._tcp_nodelay = True
+        self.settings = server.settings
 
         self.websocket = None
 

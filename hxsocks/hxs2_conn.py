@@ -51,7 +51,7 @@ END_STREAM_FLAG = 1
 
 class Hxs2Connection(HxsCommon):
 
-    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, tcp_nodelay, tcp_timeout, udp_timeout, udp_mode):
+    def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, settings):
         super().__init__()
         self._skey = skey
         self.mode = mode
@@ -63,10 +63,8 @@ class Hxs2Connection(HxsCommon):
         self._proxy = proxy
         self.server_addr = server_addr
         self.logger = logger
-        self._tcp_nodelay = tcp_nodelay
-        self.tcp_timeout = tcp_timeout
-        self.udp_timeout = udp_timeout
-        self.udp_mode = udp_mode
+        self.settings = settings
+
         self.user = user
         self.user_mgr = user_mgr
 

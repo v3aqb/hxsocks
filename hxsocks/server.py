@@ -55,16 +55,14 @@ class ForwardContext:
 
 
 class Server:
-    def __init__(self, handler_class, serverinfo, user_mgr, log_level, tcp_nodelay=False, tcp_timeout=180, udp_timeout=300, udp_mode=2):
+    def __init__(self, handler_class, serverinfo, user_mgr, settings):
         self._handler_class = handler_class
-        self.user_mgr = user_mgr
-        self.server = None
-        self.tcp_nodelay = tcp_nodelay
-        self.tcp_timeout = tcp_timeout
-        self.udp_timeout = udp_timeout
-        self.udp_mode = udp_mode
-
         self.serverinfo = serverinfo
+        self.user_mgr = user_mgr
+        self.settings = settings
+
+        self.server = None
+
         parse = urllib.parse.urlparse(serverinfo)
         query = urllib.parse.parse_qs(parse.query)
         if parse.scheme == 'ss':
@@ -88,7 +86,7 @@ class Server:
         self.address = (parse.hostname, parse.port)
 
         self.logger = logging.getLogger('hxs_%d' % self.address[1])
-        self.logger.setLevel(int(query.get('log_level', [log_level])[0]))
+        self.logger.setLevel(int(query.get('log_level', [self.settings.log_level])[0]))
         hdr = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
         hdr.setFormatter(formatter)
@@ -118,9 +116,7 @@ class HXsocksHandler:
         self.logger = server.logger
         self.user_mgr = self.server.user_mgr
         self.address = self.server.address
-        self.tcp_timeout = server.tcp_timeout
-        self.udp_timeout = server.udp_timeout
-        self.udp_mode = server.udp_mode
+        self.settings = server.settings
 
         self.encryptor = Encryptor(self.server.psk, self.server.method)
         self.__key = self.server.psk
@@ -154,7 +150,7 @@ class HXsocksHandler:
 
     async def handle(self, client_reader, client_writer):
         client_writer.transport.set_write_buffer_limits(262144)
-        if self.server.tcp_nodelay:
+        if self.settings.tcp_nodelay:
             soc = client_writer.transport.get_extra_info('socket')
             soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
@@ -268,10 +264,7 @@ class HXsocksHandler:
                                   self.user_mgr,
                                   self.address,
                                   self.logger,
-                                  self.server.tcp_nodelay,
-                                  self.tcp_timeout,
-                                  self.udp_timeout,
-                                  self.udp_mode)
+                                  self.settings)
             result = await conn.handle_connection()
             client_pkey = hashlib.md5(client_pkey).digest()
             self.user_mgr.del_key(client_pkey)
@@ -314,7 +307,8 @@ class HXsocksHandler:
             remote_reader, remote_writer = await open_connection(addr,
                                                                  port,
                                                                  self.server.proxy,
-                                                                 self.server.tcp_nodelay)
+                                                                 self.settings.tcp_conn_timeout,
+                                                                 self.settings.tcp_nodelay)
         except (ConnectionError, asyncio.TimeoutError, socket.gaierror) as err:
             self.logger.error('connect to %s:%s failed! %r', addr, port, err)
             return
@@ -354,7 +348,7 @@ class HXsocksHandler:
                 idle_time = time.monotonic() - context.last_active
                 if context.local_eof and idle_time > 60:
                     break
-                if idle_time > self.tcp_timeout:
+                if idle_time > self.settings.tcp_idle_timeout:
                     break
                 continue
             except (BufEmptyError, asyncio.IncompleteReadError, InvalidTag, OSError):
@@ -386,7 +380,7 @@ class HXsocksHandler:
                 idle_time = time.monotonic() - context.last_active
                 if context.local_eof and idle_time > 60:
                     break
-                if idle_time > self.tcp_timeout:
+                if idle_time > self.settings.tcp_idle_timeout:
                     break
                 continue
             except OSError:

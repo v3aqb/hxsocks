@@ -101,10 +101,7 @@ class HxsCommon:
         self.logger = None
 
         self._proxy = None
-        self.tcp_timeout = 600
-        self.udp_timeout = 90
-        self.udp_mode = 0
-        self._tcp_nodelay = True
+        self.settings = None
         self._settings_async_drain = False
 
         self.user_mgr = None
@@ -168,7 +165,7 @@ class HxsCommon:
                     if self._stream_writer:
                         self.logger.info('TimeoutError, active stream exist, continue')
                         continue
-                    if time.monotonic() - self._last_active > self.tcp_timeout:
+                    if time.monotonic() - self._last_active > self.settings.tcp_idle_timeout:
                         self.logger.info('connection idle.')
                         break
                     continue
@@ -262,8 +259,11 @@ class HxsCommon:
                     elif stream_id == self._next_stream_id:
                         self._next_stream_id += 1
                         # get a udp relay
-                        if self.udp_mode in (0, 1, 2):
-                            relay = UDPRelay(self, self.udp_uid, stream_id, self.udp_timeout, self.udp_mode)
+                        if self.settings.udp_mode in (0, 1, 2):
+                            relay = UDPRelay(self, self.udp_uid, stream_id,
+                                             self.settings.udp_timeout,
+                                             self.settings.udp_mode,
+                                             )
                             await relay.bind()
                             self._stream_writer[stream_id] = relay
                         else:
@@ -298,7 +298,9 @@ class HxsCommon:
         self._stream_context[stream_id] = ForwardContext(host, self.logger)
         try:
             self.user_mgr.user_access_ctrl(self.server_addr[1], host, self.client_address, self.user)
-            reader, writer = await open_connection(host, port, self._proxy, self._tcp_nodelay)
+            reader, writer = await open_connection(host, port, self._proxy,
+                                                   self.settings.tcp_conn_timeout,
+                                                   self.settings.tcp_nodelay)
             writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
         except (OSError, asyncio.TimeoutError, socket.gaierror) as err:
             # tell client request failed.
@@ -364,7 +366,7 @@ class HxsCommon:
                 if time_since_lastactive < 60:
                     continue
                 if self._stream_context[stream_id].stream_status == OPEN and \
-                        time_since_lastactive < self.tcp_timeout:
+                        time_since_lastactive < self.settings.tcp_idle_timeout:
                     continue
                 await self.close_stream(stream_id)
                 break
