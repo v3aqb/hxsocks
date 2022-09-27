@@ -60,9 +60,10 @@ configure file example
         user2: password2
     tcp_nodelay: false
     tcp_timeout: 600
-    udp_enable: false   # boolean, port_number, or list of port enabled [8138, 8139]
-    udp_mode: 3         # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric
-    udp_timeout: 600
+    tcp_conn_timeout: 12   # tcp create connection timeout
+    udp_enable: false      # boolean, port_number, or list of port enabled [8138, 8139]
+    udp_mode: 2            # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric
+    udp_timeout: 90
     log_level: 20
 
 run

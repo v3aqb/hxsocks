@@ -26,6 +26,7 @@ class Settings:
 
         cls.tcp_nodelay = cfg.get('tcp_nodelay', cls.tcp_nodelay)
         cls.tcp_idle_timeout = cfg.get('tcp_timeout', cls.tcp_idle_timeout)
+        cls.tcp_conn_timeout = cfg.get('tcp_conn_timeout', cls.tcp_conn_timeout)
         if not isinstance(cls.tcp_idle_timeout, int):
             cls.tcp_idle_timeout = 600
         cls.tcp_idle_timeout = max(cls.tcp_idle_timeout, 60)
