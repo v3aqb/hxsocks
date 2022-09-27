@@ -16,10 +16,21 @@ RESTRICTED = 1
 PORTRESTRICTED = 2
 
 
+def set_logger():
+    logger = logging.getLogger('udp_relay')
+    logger.setLevel(logging.INFO)
+    hdr = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
+    hdr.setFormatter(formatter)
+    logger.addHandler(hdr)
+
+set_logger()
+
+
 class UDPRelay:
     def __init__(self, parent, client, stream_id, timeout=300, mode=PORTRESTRICTED):
         self.parent = parent
-        self.logger = self.parent.logger
+        self.logger = logging.getLogger('udp_relay')
         self.client = client
         self.stream_id = stream_id
         self.timeout = timeout
@@ -109,7 +120,8 @@ class UDPRelay:
             except KeyError:
                 self.logger.error('KeyError on parent.on_remote_recv')
                 break
-        self.logger.info('udp_relay end, %s, %ds', self.stream_id, int(time.monotonic() - self.init_time))
+        life_time = int(time.monotonic() - self.init_time)
+        self.logger.info('udp_relay end, %s, %ds, %d', self.client, life_time, self.remote_stream.sockname[1])
         self.logger.info('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
         self.parent.close_relay(self.stream_id)
