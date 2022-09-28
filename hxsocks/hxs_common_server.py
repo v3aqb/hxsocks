@@ -11,6 +11,7 @@ from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection
 from hxsocks.udp_relay import UDPRelay, parse_dgram
 from hxsocks.udp_relay2 import get_relay2, UserRelay
+from hxsocks.hxs_udp_relay import HxsUDPRelayManager
 
 CTX = 'hxsocks2'
 
@@ -32,6 +33,7 @@ GOAWAY = 7
 WINDOW_UPDATE = 8
 # CONTINUATION = 9
 UDP_ASSOCIATE = 20
+UDP_DGRAM2 = 21
 
 PONG = 1
 END_STREAM_FLAG = 1
@@ -148,6 +150,7 @@ class HxsCommon:
 
     async def handle_connection(self):
         self.logger.debug('start recieving frames...')
+        HxsUDPRelayManager.config(self.settings)
 
         self.udp_uid = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
@@ -180,7 +183,7 @@ class HxsCommon:
                 header = frame_data.read(4)
                 frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
 
-                if frame_type in (DATA, HEADERS, UDP_ASSOCIATE):
+                if frame_type in (DATA, HEADERS, RST_STREAM, UDP_ASSOCIATE, UDP_DGRAM2):
                     self._last_active = time.monotonic()
 
                 self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
@@ -269,6 +272,8 @@ class HxsCommon:
                         else:
                             self._stream_writer[stream_id] = get_relay2(self.udp_uid)
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
+                elif frame_type == UDP_DGRAM2:  # 21
+                    HxsUDPRelayManager.on_dgram_recv(self, frame_data)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err, exc_info=True)
                 break
@@ -276,6 +281,7 @@ class HxsCommon:
         # exit loop, close all streams...
         self.logger.info('recv from hxs2 connect ended')
 
+        HxsUDPRelayManager.conn_closed(self.udp_uid, self)
         task_list = []
         for stream_id in self._stream_writer:
             self._stream_context[stream_id].stream_status = CLOSED
@@ -452,6 +458,14 @@ class HxsCommon:
             except OSError:
                 await self.close_stream(stream_id)
                 return
+
+    async def send_dgram2(self, client_id, udp_sid, data):
+        # remote addr included in data, as shadowsocks format
+        payload = client_id + udp_sid
+        payload += struct.pack(b'!H', len(data))
+        payload += data
+        payload += bytes(random.randint(8, 128))
+        await self.send_frame(UDP_DGRAM2, 0, 0, payload)
 
     async def send_frame(self, type_, flags, stream_id, payload):
         raise NotImplementedError

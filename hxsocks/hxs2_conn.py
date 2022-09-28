@@ -44,6 +44,7 @@ GOAWAY = 7
 WINDOW_UPDATE = 8
 # CONTINUATION = 9
 UDP_ASSOCIATE = 20
+UDP_DGRAM2 = 21
 
 PONG = 1
 END_STREAM_FLAG = 1
@@ -95,7 +96,7 @@ class Hxs2Connection(HxsCommon):
         self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
         if self._connection_lost:
             return
-        if type_ in (DATA, HEADERS):
+        if type_ in (DATA, HEADERS, UDP_DGRAM2):
             self._last_active = time.monotonic()
 
         header = struct.pack('>BBH', type_, flags, stream_id)
