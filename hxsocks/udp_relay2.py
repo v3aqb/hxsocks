@@ -29,16 +29,18 @@ set_logger()
 USER_RELAY = {}
 
 
-def get_relay2(user):
+def get_relay2(user, settings):
+    logger.setLevel(settings.log_level)
     if user not in USER_RELAY:
-        USER_RELAY[user] = UserRelay(user)
+        USER_RELAY[user] = UserRelay(user, settings)
     return USER_RELAY[user]
 
 
 class UserRelay:
-    def __init__(self, user):
+    def __init__(self, user, settings):
         logger.debug('UserRelay.__init__: %s', user)
         self.user = user
+        self.settings = settings
         self.relay_list = []
         self.callback_store = {}
         self.addr_count = {}  # callback_info(callback, callback_addr), address_count
@@ -59,7 +61,7 @@ class UserRelay:
             if relay.check(addr, callback, callback_addr):
                 self.addr_plus((callback, callback_addr))
                 return relay
-        relay = UDPRelay(self)
+        relay = UDPRelay(self, self.settings.udp_timeout)
         self.relay_list.append(relay)
         self.addr_plus((callback, callback_addr))
         return relay
@@ -106,7 +108,7 @@ def parse_dgram(data):
 
 
 class UDPRelay:
-    def __init__(self, parent, timeout=300):
+    def __init__(self, parent, timeout):
         self.parent = parent
         self.timeout = timeout
         self.logger = logger

@@ -24,17 +24,19 @@ def set_logger():
     hdr.setFormatter(formatter)
     logger.addHandler(hdr)
 
+
 set_logger()
 
 
 class UDPRelay:
-    def __init__(self, parent, client, stream_id, timeout=300, mode=PORTRESTRICTED):
+    def __init__(self, parent, client, stream_id, settings):
         self.parent = parent
         self.logger = logging.getLogger('udp_relay')
+        self.logger.setLevel(settings.log_level)
         self.client = client
         self.stream_id = stream_id
-        self.timeout = timeout
-        self.mode = mode
+        self.timeout = settings.udp_timeout
+        self.mode = settings.udp_mode
         self.remote_stream = None
         self.remote_addr = set()
         self.last_addr = ('0.0.0.0', 0)
@@ -82,7 +84,8 @@ class UDPRelay:
             await self.remote_stream.send(dgram, (addr, port))
             self.last_send = time.monotonic()
         except OSError as err:
-            self.logger.info('udp send fail. %s:%d, %r', addr, port, err)
+            self.logger.error('udp send fail. %s:%d, %r', addr, port, err)
+            # self._close = True
 
     async def recv_from_remote(self):
         while not self._close:
@@ -99,7 +102,7 @@ class UDPRelay:
                         break
                 continue
             except OSError as err:
-                self.logger.error('OSError %r', err)
+                self.logger.error('recv_from_remote OSError %r', err)
                 break
 
             addr, port = remote_addr
@@ -108,7 +111,7 @@ class UDPRelay:
             if self.mode:
                 key = addr if self.mode == 1 else (addr, port)
                 if key not in self.remote_addr:
-                    self.logger.info('udp drop %r', remote_addr)
+                    self.logger.debug('NAT udp drop %r', remote_addr)
                     continue
             remote_ip = ipaddress.ip_address(addr)
             buf = b'\x01' if remote_ip.version == 4 else b'\x04'
@@ -121,8 +124,9 @@ class UDPRelay:
                 self.logger.error('KeyError on parent.on_remote_recv')
                 break
         life_time = int(time.monotonic() - self.init_time)
-        self.logger.info('udp_relay end, %s, %ds, %d', self.client, life_time, self.remote_stream.sockname[1])
-        self.logger.info('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
+        if life_time < self.timeout + 20:
+            self.logger.warning('udp_relay end, %s, %ds, %d', self.client, life_time, self.remote_stream.sockname[1])
+            self.logger.warning('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
         self.parent.close_relay(self.stream_id)
 
@@ -165,20 +169,19 @@ class UDPRelayServer:
     '''
     provide udp relay for shadowsocks
     '''
-    def __init__(self, server, timeout, udp_mode):
+    def __init__(self, server, settings):
         self.server_addr = server.address
         self.method = server.method
         self.__key = server.psk
         self.proxy = server.proxy
-        self.timeout = timeout
-        self.udp_mode = udp_mode
+        self.settings = settings
 
         self.task = None
         self.server_stream = None
         self.relay_holder = {}  # {client_addr: udp_relay}
 
         self.logger = logging.getLogger('ssudp_%d' % self.server_addr[1])
-        self.logger.setLevel(logging.INFO)
+        self.logger.setLevel(settings.log_level)
         hdr = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
         hdr.setFormatter(formatter)
@@ -237,10 +240,10 @@ class UDPRelayServer:
         '''
         if client_addr not in self.relay_holder:
             self.logger.debug('start udp_relay %r', client_addr)
-            if self.udp_mode in (0, 1, 2):
-                relay = UDPRelay(self, client_addr[0], client_addr, self.timeout, self.udp_mode)
+            if self.settings.udp_mode in (0, 1, 2):
+                relay = UDPRelay(self, client_addr[0], client_addr, self.settings)
                 await relay.bind()
                 self.relay_holder[client_addr] = relay
             else:
-                self.relay_holder[client_addr] = get_relay2(client_addr[0])
+                self.relay_holder[client_addr] = get_relay2(client_addr[0], self.settings)
         return self.relay_holder[client_addr]

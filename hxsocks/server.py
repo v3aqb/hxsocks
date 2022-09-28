@@ -86,7 +86,7 @@ class Server:
         self.address = (parse.hostname, parse.port)
 
         self.logger = logging.getLogger('hxs_%d' % self.address[1])
-        self.logger.setLevel(int(query.get('log_level', [self.settings.log_level])[0]))
+        self.logger.setLevel(self.settings.log_level)
         hdr = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
         hdr.setFormatter(formatter)
@@ -297,7 +297,7 @@ class HXsocksHandler:
         try:
             self.user_mgr.user_access_ctrl(self.address[1], addr, self.client_address, self.__key)
         except ValueError as err:
-            self.logger.error('access denied! %s:%s, %s %s', addr, port, err)
+            self.logger.warning('access denied! %s:%s, %s %s', addr, port, err)
             return
 
         # create connection

@@ -7,8 +7,7 @@ import logging
 from hxsocks.udp_relay import UDPRelay, parse_dgram
 from hxsocks.udp_relay2 import get_relay2
 
-logger = logging.getLogger('udp_relay3')
-logger.setLevel(logging.INFO)
+logger = logging.getLogger('hxs_udp_relay')
 hdr = logging.StreamHandler()
 formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
 hdr.setFormatter(formatter)
@@ -30,11 +29,14 @@ class HxsUDPRelayManager:
     logger = logger
     udp_mode = 2
     timeout = 90
+    settings = None
 
     @classmethod
     def config(cls, settings):
         cls.udp_mode = settings.udp_mode
         cls.timeout = settings.udp_timeout
+        cls.settings = settings
+        cls.logger.setLevel(settings.log_level)
 
     @classmethod
     def on_dgram_recv(cls, hxs_conn, payload):
@@ -48,10 +50,10 @@ class HxsUDPRelayManager:
         client_addr = (client_id, udp_sid)
         if client_addr not in cls.relay_store:
             if cls.udp_mode in (0, 1, 2):
-                relay = UDPRelay(cls, hxs_conn.udp_uid, client_addr, cls.timeout, cls.udp_mode)
+                relay = UDPRelay(cls, hxs_conn.udp_uid, client_addr, cls.settings)
                 await relay.bind()
             else:
-                relay = get_relay2(client_id)
+                relay = get_relay2(client_id, cls.settings)
             cls.relay_store[client_addr] = relay
         cls.hxs_conn_store[client_id] = hxs_conn
         relay = cls.relay_store[client_addr]
@@ -62,17 +64,20 @@ class HxsUDPRelayManager:
     async def on_remote_recv(cls, client_addr, buf):
         logger.debug('on_remote_recv')
         client_id, udp_sid = client_addr
+        if client_id not in cls.hxs_conn_store:
+            logger.warning('on_remote_recv, hxs_connection NOT FOUND!')
+            return
         hxs_conn = cls.hxs_conn_store[client_id]
         await hxs_conn.send_dgram2(client_id, udp_sid, buf)
 
     @classmethod
     def close_relay(cls, client_addr):
-        logger.debug('close_relay')
+        logger.debug('close_relay, %s', client_addr)
         del cls.relay_store[client_addr]
 
     @classmethod
     def conn_closed(cls, client_id, hxs_conn):
-        logger.debug('conn_closed')
+        logger.info('conn_closed, %s', hxs_conn.udp_uid)
         if client_id not in cls.hxs_conn_store:
             return
         if hxs_conn == cls.hxs_conn_store[client_id]:

@@ -263,14 +263,11 @@ class HxsCommon:
                         self._next_stream_id += 1
                         # get a udp relay
                         if self.settings.udp_mode in (0, 1, 2):
-                            relay = UDPRelay(self, self.udp_uid, stream_id,
-                                             self.settings.udp_timeout,
-                                             self.settings.udp_mode,
-                                             )
+                            relay = UDPRelay(self, self.udp_uid, stream_id, self.settings)
                             await relay.bind()
                             self._stream_writer[stream_id] = relay
                         else:
-                            self._stream_writer[stream_id] = get_relay2(self.udp_uid)
+                            self._stream_writer[stream_id] = get_relay2(self.udp_uid, self.settings)
                         self._stream_context[stream_id] = ForwardContext('udp', self.logger)
                 elif frame_type == UDP_DGRAM2:  # 21
                     HxsUDPRelayManager.on_dgram_recv(self, frame_data)
@@ -317,10 +314,11 @@ class HxsCommon:
             # tell client request success, header frame, first byte is \x00
             timelog = time.monotonic() - timelog
             if timelog > 1:
-                self.logger.info('connect %s:%s connected, %.3fs', host, port, timelog)
+                self.logger.warning('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
             if self._stream_context[stream_id].stream_status == CLOSED:
+                self.logger.warning('connect %s:%s connected, client closed', host, port)
                 writer.close()
                 await writer.wait_closed()
                 return

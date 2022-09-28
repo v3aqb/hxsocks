@@ -28,7 +28,7 @@ def start_hxs_server(confpath):
         sys.stderr.write('server cert not found, creating...\n')
         ECC(key_len=32).save(cert_path)
 
-    user_mgr = UserManager(cert_path, Settings.conn_limit)
+    user_mgr = UserManager(cert_path, Settings)
     cert = user_mgr.server_cert.get_pub_key()
     cert_hash = hashlib.sha256(cert).hexdigest()[:8]
     sys.stderr.write('load server cert %s\n' % cert_hash)
@@ -52,7 +52,7 @@ def start_hxs_server(confpath):
                 if server_.method.startswith('2022'):
                     sys.stderr.write('2022-blake3 udp not supported yet.\n')
                     continue
-                udp_server = UDPRelayServer(server_, Settings.udp_timeout, Settings.udp_mode)
+                udp_server = UDPRelayServer(server_, Settings)
                 udp_server.start()
                 server_list.append(udp_server)
         if server.startswith('hxs3'):

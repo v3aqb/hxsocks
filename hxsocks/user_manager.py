@@ -4,14 +4,22 @@ import time
 import struct
 import hashlib
 import hmac
+import logging
 from urllib.request import urlopen
 from collections import defaultdict, deque
-from hxcrypto import ECC, compare_digest
-from .apfilter import ap_filter
+from hxcrypto import ECC
+from hxsocks.apfilter import ap_filter
 
 
 class porn_filter:
-    def __init__(self):
+    def __init__(self, settings):
+        self.logger = logging.getLogger('porn_filter')
+        self.logger.setLevel(settings.log_level)
+        hdr = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
+        hdr.setFormatter(formatter)
+        self.logger.addHandler(hdr)
+
         self.porn_filter = None
         self.last_load = 0
         self.loaded = False
@@ -22,8 +30,8 @@ class porn_filter:
         for line in hosts:
             try:
                 self.porn_filter.add('||' + line.decode().strip().split()[1])
-            except Exception:
-                pass
+            except Exception as err:
+                self.logger.error('%r', err, exc_info=True)
         self.loaded = True
 
     def is_porn(self, addr):
@@ -32,21 +40,21 @@ class porn_filter:
             try:
                 self.load()
             except Exception as err:
-                sys.stderr.write('load porn_filter failed.\n')
+                self.logger.error('load porn_filter failed.', exc_info=True)
         if self.loaded:
             return self.porn_filter.match(addr)
 
 
 class UserManager:
-    def __init__(self, server_cert, limit=20):
+    def __init__(self, server_cert, settings):
         '''server_cert: path to server_cert'''
         self.server_cert = ECC(from_file=server_cert)
-        self._limit = limit
+        self._limit = settings.conn_limit
         self.user_pass = {}
         self.user_tag = {}
         self.userpkeys = defaultdict(deque)  # user name: client key
         self.pkeyuser = {}  # user pubkey: user name
-        self.porn_filter = porn_filter()
+        self.porn_filter = porn_filter(settings)
         self.quick_auth_data = {}
 
     def add_user(self, user, password):
@@ -105,6 +113,8 @@ class UserManager:
                 break
             except ValueError:
                 continue
+        else:
+            raise ValueError('key exchange fail')
         user_pkey_md5 = hashlib.md5(client_pkey).digest()
         self.userpkeys[user].append(user_pkey_md5)
         self.pkeyuser[user_pkey_md5] = user

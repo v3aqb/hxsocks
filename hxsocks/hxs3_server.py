@@ -66,7 +66,7 @@ class hxs3_server:
         self.server = None
 
     def start_service(self):
-        self.logger.info('starting hxs3 server at %r', self.address)
+        self.logger.warning('starting hxs3 server at %r', self.address)
         asyncio.ensure_future(websockets.server.serve(self.handle,
                                                       host=self.address[0],
                                                       port=self.address[1],
@@ -112,7 +112,7 @@ class hxs3_handler(HxsCommon):
 
         ver = data.read(1)[0]
         if ver != 0:
-            self.logger.error('version %d not recognised', ver, self.client_address)
+            self.logger.error('version %d not recognised, %s', ver, self.client_address)
             return
         pklen = data.read(1)[0]
         client_pkey = data.read(pklen)
