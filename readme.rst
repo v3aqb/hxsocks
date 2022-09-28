@@ -64,7 +64,7 @@ configure file example
     udp_enable: false      # boolean, port_number, or list of port enabled [8138, 8139]
     udp_mode: 2            # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric
     udp_timeout: 90
-    log_level: 20
+    log_level: info        # str or int, error: 40, warning: 30, info: 20 debug: 10
 
 run
 -----

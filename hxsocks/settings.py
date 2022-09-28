@@ -1,5 +1,6 @@
 
 import yaml
+import logging
 
 
 class Settings:
@@ -22,7 +23,10 @@ class Settings:
             cfg = yaml.safe_load(ymlfile)
 
         cls.conn_limit = cfg.get('limit', cls.conn_limit)
-        cls.log_level = cfg.get('log_level', cls.log_level)
+        log_level = cfg.get('log_level', cls.log_level)
+        cls.log_level = log_level
+        if isinstance(log_level, str):
+            cls.log_level = getattr(logging, log_level.upper())
 
         cls.tcp_nodelay = cfg.get('tcp_nodelay', cls.tcp_nodelay)
         cls.tcp_idle_timeout = cfg.get('tcp_timeout', cls.tcp_idle_timeout)
