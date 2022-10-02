@@ -220,7 +220,7 @@ class HXsocksHandler:
             self.logger.error('read request header error, %s %r', self.client_address, err)
             await self.play_dead()
             return
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError) as err:
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionError, IndexError) as err:
             self.logger.warning('read request header error, %s, %r', self.client_address, err)
             return
 
@@ -401,5 +401,5 @@ class HXsocksHandler:
         context.remote_eof = True
         try:
             write_to.write_eof()
-        except OSError:
+        except (OSError, RuntimeError):
             pass
