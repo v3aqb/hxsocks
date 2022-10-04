@@ -92,19 +92,10 @@ class Hxs2Connection(HxsCommon):
         except (ConnectionError, asyncio.TimeoutError, asyncio.IncompleteReadError, InvalidTag) as err:
             raise ReadFrameError(err) from err
 
-    async def send_frame(self, type_, flags, stream_id, payload):
-        self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
-        if self._connection_lost:
-            return
-        if type_ in (DATA, HEADERS, UDP_DGRAM2):
-            self._last_active = time.monotonic()
-
-        header = struct.pack('>BBH', type_, flags, stream_id)
-        data = header + payload
-        ct_ = self._cipher.encrypt(data)
+    async def _send_frame(self, ct_):
         self._client_writer.write(struct.pack('>H', len(ct_)) + ct_)
         try:
             await self._client_writer.drain()
-        except ConnectionError:
+        except ConnectionError as err:
+            self.logger.error('send_frame fail: %r', err)
             self._connection_lost = True
-            raise

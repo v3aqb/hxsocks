@@ -8,8 +8,6 @@ import io
 import hashlib
 import logging
 import random
-import struct
-import time
 import urllib.parse
 
 import asyncio
@@ -155,21 +153,12 @@ class hxs3_handler(HxsCommon):
             frame_data = await asyncio.wait_for(fut, timeout=timeout)
             frame_data = self.decrypt_frame(frame_data)
             return frame_data
-        except (ConnectionClosed, RuntimeError, InvalidTag) as err:
+        except (ConnectionClosed, RuntimeError, InvalidTag, asyncio.IncompleteReadError) as err:
             raise ReadFrameError(err) from err
 
-    async def send_frame(self, type_, flags, stream_id, payload):
-        self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
-        if self._connection_lost:
-            return
-        if type_ in (DATA, HEADERS, UDP_DGRAM2):
-            self._last_active = time.monotonic()
-
-        header = struct.pack('>BBH', type_, flags, stream_id)
-        data = header + payload
-        ct_ = self._cipher.encrypt(data)
+    async def _send_frame(self, ct_):
         try:
             await self.websocket.send(ct_)
-        except ConnectionClosed:
+        except ConnectionClosed as err:
+            self.logger.error('send_frame fail: %r', err)
             self._connection_lost = True
-            raise

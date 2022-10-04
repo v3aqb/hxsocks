@@ -330,6 +330,20 @@ class HxsCommon:
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
+    async def send_frame(self, type_, flags, stream_id, payload):
+        self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
+        if self._connection_lost:
+            self.logger.info('send_frame, connection lost')
+            return
+        if type_ in (DATA, HEADERS, UDP_DGRAM2):
+            self._last_active = time.monotonic()
+
+        header = struct.pack('>BBH', type_, flags, stream_id)
+        data = header + payload
+        ct_ = self._cipher.encrypt(data)
+
+        await self._send_frame(ct_)
+
     async def send_one_data_frame(self, stream_id, data):
         payload = struct.pack('>H', len(data)) + data
         diff = self.bufsize - len(data)
@@ -465,7 +479,7 @@ class HxsCommon:
         payload += bytes(random.randint(8, 128))
         await self.send_frame(UDP_DGRAM2, 0, 0, payload)
 
-    async def send_frame(self, type_, flags, stream_id, payload):
+    async def _send_frame(self, ct_):
         raise NotImplementedError
 
     async def read_frame(self, timeout):
