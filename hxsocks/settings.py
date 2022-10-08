@@ -57,6 +57,7 @@ class Settings:
         if not isinstance(cls.udp_mode, int):
             cls.udp_mode = 0
 
-        cls.users = cfg['users']
+        users = cfg['users']
+        cls.users = users if users else cls.users
 
         cls.servers = cfg['servers']
