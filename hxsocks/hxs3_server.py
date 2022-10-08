@@ -78,7 +78,14 @@ class hxs3_server:
 
     async def handle(self, websocket, path):
         handler = self.handller_class(self)
-        await handler.handle(websocket, path)
+        try:
+            await handler.handle(websocket, path)
+        except ConnectionClosed:
+            self.logger.error('ConnectionClosed')
+        try:
+            await handler.websocket.close()
+        except ConnectionClosed:
+            pass
 
 
 class hxs3_handler(HxsCommon):
@@ -102,11 +109,11 @@ class hxs3_handler(HxsCommon):
         if xff:
             self.client_address = (xff[0], 0)
 
-        fut = self.websocket.recv()
         try:
-            client_auth = await asyncio.wait_for(fut, timeout=6)
-        except asyncio.TimeoutError:
-            self.logger.error('read client auth failed. client: %s', self.client_address)
+            fut = self.websocket.recv()
+            client_auth = await asyncio.wait_for(fut, timeout=12)
+        except (asyncio.TimeoutError, ConnectionClosed) as err:
+            self.logger.error('read client auth failed. client: %s, %r', self.client_address, err)
             return
         data = io.BytesIO(client_auth)
 
@@ -128,16 +135,19 @@ class hxs3_handler(HxsCommon):
             await self.play_dead()
             return
 
-        reply = reply + chr(self._mode).encode() + bytes(random.randint(64, 2048))
-        await self.websocket.send(reply)
-
+        reply = reply + chr(self._mode).encode() + bytes(random.randint(64, 1024))
+        try:
+            await self.websocket.send(reply)
+        except ConnectionClosed:
+            self.logger.error('send auth reply fail.')
+            self._connection_lost = True
         await self.handle_connection()
         client_pkey = hashlib.md5(client_pkey).digest()
         self.user_mgr.del_key(client_pkey)
-        await self.websocket.close()
         return
 
     async def play_dead(self):
+        self.logger.info('enter play_dead')
         count = random.randint(12, 30)
         for _ in range(count):
             timeout = random.random()
@@ -155,7 +165,7 @@ class hxs3_handler(HxsCommon):
             frame_data = await asyncio.wait_for(fut, timeout=timeout)
             frame_data = self.decrypt_frame(frame_data)
             return frame_data
-        except (ConnectionClosed, RuntimeError, InvalidTag, asyncio.IncompleteReadError) as err:
+        except (ConnectionClosed, RuntimeError, InvalidTag) as err:
             raise ReadFrameError(err) from err
 
     async def _send_frame(self, ct_):

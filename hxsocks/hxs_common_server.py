@@ -166,7 +166,7 @@ class HxsCommon:
                     break
                 except asyncio.TimeoutError:
                     if self._stream_writer:
-                        self.logger.info('TimeoutError, active stream exist, continue')
+                        self.logger.debug('TimeoutError, active stream exist, continue')
                         continue
                     if time.monotonic() - self._last_active > self.settings.tcp_idle_timeout:
                         self.logger.info('connection idle.')
@@ -276,7 +276,7 @@ class HxsCommon:
                 break
         self._connection_lost = True
         # exit loop, close all streams...
-        self.logger.info('recv from hxs2 connect ended')
+        self.logger.info('recv from hxsocks connect ended')
 
         HxsUDPRelayManager.conn_closed(self.udp_uid, self)
         task_list = []
@@ -333,7 +333,7 @@ class HxsCommon:
     async def send_frame(self, type_, flags, stream_id, payload):
         self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
         if self._connection_lost:
-            self.logger.info('send_frame, connection lost')
+            self.logger.debug('send_frame, connection lost')
             return
         if type_ in (DATA, HEADERS, UDP_DGRAM2):
             self._last_active = time.monotonic()

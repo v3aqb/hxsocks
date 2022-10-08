@@ -195,8 +195,8 @@ class UDPRelay:
         if remote_addr not in self.callback_info:
             self.callback_info[remote_addr] = (callback, callback_addr)
         if remote_addr not in self.remote_addr:
-            self.logger.info('udp send %s:%d, relay_port:%d',
-                             remote_addr[0], remote_addr[1], self.remote_stream.sockname[1])
+            self.logger.debug('udp send %s:%d, relay_port:%d',
+                              remote_addr[0], remote_addr[1], self.remote_stream.sockname[1])
             self.remote_addr.add(remote_addr)
         self.last_addr = remote_addr
         try:
@@ -238,7 +238,8 @@ class UDPRelay:
             callback, callback_addr = self.callback_info[remote_addr]
             await callback.on_remote_recv(callback_addr, buf)
         self.logger.info('udp_relay end, %s, %ds', self.remote_stream.sockname, int(time.monotonic() - self.init_time))
-        self.logger.info('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
+        if len(self.remote_addr) > 1:
+            self.logger.info('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
         self.clear()
         self.parent.remove_relay(self)

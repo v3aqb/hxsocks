@@ -251,7 +251,7 @@ class HXsocksHandler:
                 await self.play_dead()
                 return
 
-            reply = reply + bytes((mode, )) + bytes(random.randint(64, 2048))
+            reply = reply + bytes((mode, )) + bytes(random.randint(64, 1024))
             reply = struct.pack('>H', len(reply)) + reply
             client_writer.write(self.encryptor.encrypt(reply, role=1))
 
@@ -395,7 +395,7 @@ class HXsocksHandler:
             try:
                 write_to.write(data)
                 await write_to.drain()
-            except ConnectionError:
+            except (ConnectionError, RuntimeError):
                 context.remote_eof = True
                 return
         context.remote_eof = True

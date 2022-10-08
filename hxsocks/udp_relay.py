@@ -75,8 +75,8 @@ class UDPRelay:
 
         key = addr if self.mode == 1 else (addr, port)
         if key not in self.remote_addr:
-            self.logger.info('udp send %s:%d, relay_port:%d',
-                             addr, port, self.remote_stream.sockname[1])
+            self.logger.debug('udp send %s:%d, relay_port:%d',
+                              addr, port, self.remote_stream.sockname[1])
             self.remote_addr.add(key)
         self.last_addr = (addr, port)
 
@@ -124,8 +124,8 @@ class UDPRelay:
                 self.logger.error('KeyError on parent.on_remote_recv')
                 break
         life_time = int(time.monotonic() - self.init_time)
-        if life_time < self.timeout + 20:
-            self.logger.warning('udp_relay end, %s, %ds, %d', self.client, life_time, self.remote_stream.sockname[1])
+        self.logger.warning('udp_relay end, %s, %ds, %d', self.client, life_time, self.remote_stream.sockname[1])
+        if len(self.remote_addr) > 1:
             self.logger.warning('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
         self.parent.close_relay(self.stream_id)
