@@ -73,7 +73,8 @@ class HxsUDPRelayManager:
     @classmethod
     def close_relay(cls, client_addr):
         logger.debug('close_relay, %s', client_addr)
-        del cls.relay_store[client_addr]
+        if client_addr in cls.relay_store:
+            del cls.relay_store[client_addr]
 
     @classmethod
     def conn_closed(cls, client_id, hxs_conn):
