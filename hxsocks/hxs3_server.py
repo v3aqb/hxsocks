@@ -68,10 +68,12 @@ class hxs3_server:
         asyncio.ensure_future(websockets.server.serve(self.handle,
                                                       host=self.address[0],
                                                       port=self.address[1],
-                                                      ping_interval=10,
+                                                      ping_interval=None,
                                                       ping_timeout=None,
-                                                      read_limit=2 ** 18,
-                                                      write_limit=2 ** 18,
+                                                      max_size=2 ** 17,
+                                                      max_queue=2 ** 4,
+                                                      read_limit=2 ** 16,
+                                                      write_limit=2 ** 16,
                                                       ))
 
     async def handle(self, websocket, path):
