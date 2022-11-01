@@ -9,8 +9,6 @@ import asyncio
 from hxcrypto import InvalidTag, AEncryptor
 from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection
-from hxsocks.udp_relay import UDPRelay, parse_dgram
-from hxsocks.udp_relay2 import get_relay2, UserRelay
 from hxsocks.hxs_udp_relay import HxsUDPRelayManager
 
 CTX = 'hxsocks2'
@@ -32,7 +30,6 @@ PING = 6
 GOAWAY = 7
 WINDOW_UPDATE = 8
 # CONTINUATION = 9
-UDP_ASSOCIATE = 20
 UDP_DGRAM2 = 21
 
 PONG = 1
@@ -152,7 +149,6 @@ class HxsCommon:
         self.logger.debug('start recieving frames...')
         HxsUDPRelayManager.config(self.settings)
 
-        self.udp_uid = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
             try:
                 if self._gone and not self._stream_writer:
@@ -201,12 +197,8 @@ class HxsCommon:
                         break
                     # sent data to stream
                     try:
-                        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
-                            addr, dgram = parse_dgram(data)
-                            await self._stream_writer[stream_id].send_dgram(addr, dgram, self, stream_id)
-                        else:
-                            self._stream_writer[stream_id].write(data)
-                            await self.stream_writer_drain(stream_id)
+                        self._stream_writer[stream_id].write(data)
+                        await self.stream_writer_drain(stream_id)
                         self._stream_context[stream_id].data_recv(len(data))
                     except ConnectionError:
                         # remote closed, reset stream
@@ -256,19 +248,6 @@ class HxsCommon:
                         self._stream_context[stream_id].resume_reading.clear()
                     else:
                         self._stream_context[stream_id].resume_reading.set()
-                elif frame_type == UDP_ASSOCIATE:  # 20
-                    if stream_id == 0:
-                        await self.send_frame(UDP_ASSOCIATE, OPEN, 0, bytes(random.randint(64, 256)))
-                    elif stream_id == self._next_stream_id:
-                        self._next_stream_id += 1
-                        # get a udp relay
-                        if self.settings.udp_mode in (0, 1, 2):
-                            relay = UDPRelay(self, self.udp_uid, stream_id, self.settings)
-                            await relay.bind()
-                            self._stream_writer[stream_id] = relay
-                        else:
-                            self._stream_writer[stream_id] = get_relay2(self.udp_uid, self.settings)
-                        self._stream_context[stream_id] = ForwardContext('udp', self.logger)
                 elif frame_type == UDP_DGRAM2:  # 21
                     HxsUDPRelayManager.on_dgram_recv(self, frame_data)
             except Exception as err:
@@ -282,9 +261,7 @@ class HxsCommon:
         task_list = []
         for stream_id in self._stream_writer:
             self._stream_context[stream_id].stream_status = CLOSED
-            if isinstance(self._stream_writer[stream_id], UserRelay):
-                self._stream_writer[stream_id].user_close(self)
-            elif not self._stream_writer[stream_id].is_closing():
+            if not self._stream_writer[stream_id].is_closing():
                 self._stream_writer[stream_id].close()
                 if stream_id in self._stream_writer:
                     task_list.append(self._stream_writer[stream_id])
@@ -430,8 +407,6 @@ class HxsCommon:
             del self._stream_writer[stream_id]
             self.log_access(stream_id)
             try:
-                if isinstance(writer, UserRelay):
-                    return
                 if not writer.is_closing():
                     writer.close()
                 await writer.wait_closed()
