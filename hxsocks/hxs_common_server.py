@@ -9,12 +9,12 @@ import asyncio
 from hxcrypto import InvalidTag, AEncryptor
 from hxcrypto.encrypt import EncryptorStream
 from hxsocks.util import open_connection
-from hxsocks.hxs_udp_relay import HxsUDPRelayManager
+from hxsocks.hxs_udp_relay import HxsUDPRelayManager, parse_dgram2
 
 CTX = 'hxsocks2'
 
 OPEN = 0
-EOF_SENT = 1   # SENT END_STREAM
+EOF_SENT = 1  # SENT END_STREAM
 EOF_RECV = 2  # RECV END_STREAM
 CLOSED = 3
 
@@ -108,6 +108,7 @@ class HxsCommon:
         self.client_address = None
         self.user = 'user'
         self.udp_uid = 'udp_uid'
+        self.client_id = 'client_id'
 
         self._init_time = time.monotonic()
         self._last_active = self._init_time
@@ -149,6 +150,7 @@ class HxsCommon:
         self.logger.debug('start recieving frames...')
         HxsUDPRelayManager.config(self.settings)
 
+        self.udp_uid = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
             try:
                 if self._gone and not self._stream_writer:
@@ -179,7 +181,7 @@ class HxsCommon:
                 header = frame_data.read(4)
                 frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
 
-                if frame_type in (DATA, HEADERS, RST_STREAM, UDP_ASSOCIATE, UDP_DGRAM2):
+                if frame_type in (DATA, HEADERS, RST_STREAM, UDP_DGRAM2):
                     self._last_active = time.monotonic()
 
                 self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
@@ -249,7 +251,9 @@ class HxsCommon:
                     else:
                         self._stream_context[stream_id].resume_reading.set()
                 elif frame_type == UDP_DGRAM2:  # 21
-                    HxsUDPRelayManager.on_dgram_recv(self, frame_data)
+                    client_id, udp_sid, data = parse_dgram2(frame_data)
+                    self.client_id = client_id
+                    await HxsUDPRelayManager.send_dgram(client_id, udp_sid, data, self)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err, exc_info=True)
                 break
@@ -257,7 +261,7 @@ class HxsCommon:
         # exit loop, close all streams...
         self.logger.info('recv from hxsocks connect ended')
 
-        HxsUDPRelayManager.conn_closed(self.udp_uid, self)
+        HxsUDPRelayManager.conn_closed(self.client_id, self)
         task_list = []
         for stream_id in self._stream_writer:
             self._stream_context[stream_id].stream_status = CLOSED

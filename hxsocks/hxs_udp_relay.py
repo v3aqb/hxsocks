@@ -1,7 +1,6 @@
 
 
 import struct
-import asyncio
 import logging
 
 from hxsocks.udp_relay import UDPRelay, parse_dgram
@@ -39,12 +38,6 @@ class HxsUDPRelayManager:
         cls.logger.setLevel(settings.log_level)
 
     @classmethod
-    def on_dgram_recv(cls, hxs_conn, payload):
-        logger.debug('on_dgram_recv')
-        client_id, udp_sid, data = parse_dgram2(payload)
-        asyncio.ensure_future(cls.send_dgram(client_id, udp_sid, data, hxs_conn))
-
-    @classmethod
     async def send_dgram(cls, client_id, udp_sid, data, hxs_conn):
         logger.debug('send_dgram')
         client_addr = (client_id, udp_sid)
@@ -57,8 +50,9 @@ class HxsUDPRelayManager:
             cls.relay_store[client_addr] = relay
         cls.hxs_conn_store[client_id] = hxs_conn
         relay = cls.relay_store[client_addr]
-        addr, dgram = parse_dgram(data)
-        await relay.send_dgram(addr, dgram, cls, client_addr)
+        if data:
+            addr, dgram = parse_dgram(data)
+            await relay.send_dgram(addr, dgram, cls, client_addr)
 
     @classmethod
     async def on_remote_recv(cls, client_addr, buf):
