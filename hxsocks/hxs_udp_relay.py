@@ -38,17 +38,17 @@ class HxsUDPRelayManager:
         cls.logger.setLevel(settings.log_level)
 
     @classmethod
-    async def send_dgram(cls, client_id, udp_sid, data, hxs_conn):
+    async def send_dgram(cls, udp_sid, data, hxs_conn):
         logger.debug('send_dgram')
-        client_addr = (client_id, udp_sid)
+        client_addr = (hxs_conn.client_id, udp_sid)
         if client_addr not in cls.relay_store:
             if cls.udp_mode in (0, 1, 2):
                 relay = UDPRelay(cls, hxs_conn.udp_uid, client_addr, cls.settings)
                 await relay.bind()
             else:
-                relay = get_relay2(client_id, cls.settings)
+                relay = get_relay2(hxs_conn.client_id, cls.settings)
             cls.relay_store[client_addr] = relay
-        cls.hxs_conn_store[client_id] = hxs_conn
+        cls.hxs_conn_store[hxs_conn.client_id] = hxs_conn
         relay = cls.relay_store[client_addr]
         if data:
             addr, dgram = parse_dgram(data)
@@ -71,9 +71,9 @@ class HxsUDPRelayManager:
             del cls.relay_store[client_addr]
 
     @classmethod
-    def conn_closed(cls, client_id, hxs_conn):
-        logger.info('conn_closed, %s', hxs_conn.udp_uid)
-        if client_id not in cls.hxs_conn_store:
+    def conn_lost(cls, hxs_conn):
+        logger.info('conn_lost, %s', hxs_conn.udp_uid)
+        if hxs_conn.client_id not in cls.hxs_conn_store:
             return
-        if hxs_conn == cls.hxs_conn_store[client_id]:
-            del cls.hxs_conn_store[client_id]
+        if hxs_conn == cls.hxs_conn_store[hxs_conn.client_id]:
+            del cls.hxs_conn_store[hxs_conn.client_id]

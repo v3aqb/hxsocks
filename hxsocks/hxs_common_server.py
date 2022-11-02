@@ -253,7 +253,7 @@ class HxsCommon:
                 elif frame_type == UDP_DGRAM2:  # 21
                     client_id, udp_sid, data = parse_dgram2(frame_data)
                     self.client_id = client_id
-                    await HxsUDPRelayManager.send_dgram(client_id, udp_sid, data, self)
+                    await HxsUDPRelayManager.send_dgram(udp_sid, data, self)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err, exc_info=True)
                 break
@@ -261,7 +261,7 @@ class HxsCommon:
         # exit loop, close all streams...
         self.logger.info('recv from hxsocks connect ended')
 
-        HxsUDPRelayManager.conn_closed(self.client_id, self)
+        HxsUDPRelayManager.conn_lost(self)
         task_list = []
         for stream_id in self._stream_writer:
             self._stream_context[stream_id].stream_status = CLOSED
