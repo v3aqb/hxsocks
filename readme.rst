@@ -19,17 +19,17 @@ hxsocks3: a websocket port of hxsocks2, works perfectly with nginx.
 features
 --------
 
-- compatible with shadowsocks(with UDP relay)
+- compatible with shadowsocks
 - multiple user on single port
 - perfect forward security
 - connection multiplexing
 - some MITM attack protection
-- udp relay (over tcp, full cone)
+- udp relay (over tcp, full cone available)
 
 install
 -------
 
-You may want to install ``python3-uvloop`` to increase performance.
+You may want to install ``python3-uvloop`` for better performance.
 
 ::
 
@@ -64,7 +64,7 @@ configure file example
     tcp_nodelay: false
     tcp_timeout: 600
     tcp_conn_timeout: 12   # tcp create connection timeout
-    udp_enable: false      # boolean, port_number, or list of port enabled [8138, 8139]
+    udp_enable: false      # boolean, port_number, or list of port enabled [8138, 8139], shadowsocks only
     udp_mode: 2            # 0 for fullcone, 1 for restricted, 2 for port_restricted, 3 for symmetric
     udp_timeout: 90
     log_level: info        # str or int, error: 40, warning: 30, info: 20 debug: 10
