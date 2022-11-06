@@ -106,9 +106,9 @@ class HxsCommon:
         self.user_mgr = None
         self.server_addr = None
         self.client_address = None
-        self.user = 'user'
-        self.udp_uid = 'udp_uid'
-        self.client_id = 'client_id'
+        self.user = ''
+        self.udp_uid = ''
+        self.client_id = ''
 
         self._init_time = time.monotonic()
         self._last_active = self._init_time
@@ -216,7 +216,7 @@ class HxsCommon:
                         # rest of the payload is discarded
                         asyncio.ensure_future(self.create_connection(stream_id, host, port))
 
-                    elif stream_id < self._next_stream_id:
+                    elif stream_id in self._stream_writer:
                         self.logger.debug('sid %s END_STREAM. status %s',
                                           stream_id,
                                           self._stream_context[stream_id].stream_status)
@@ -252,7 +252,8 @@ class HxsCommon:
                         self._stream_context[stream_id].resume_reading.set()
                 elif frame_type == UDP_DGRAM2:  # 21
                     client_id, udp_sid, data = parse_dgram2(frame_data)
-                    self.client_id = client_id
+                    if not self.client_id:
+                        self.client_id = client_id
                     await HxsUDPRelayManager.send_dgram(udp_sid, data, self)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err, exc_info=True)

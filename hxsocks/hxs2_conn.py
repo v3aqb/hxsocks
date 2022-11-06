@@ -20,7 +20,6 @@
 
 import asyncio
 import struct
-import time
 
 from hxcrypto import InvalidTag
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError

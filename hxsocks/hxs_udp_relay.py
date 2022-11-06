@@ -40,17 +40,17 @@ class HxsUDPRelayManager:
     @classmethod
     async def send_dgram(cls, udp_sid, data, hxs_conn):
         logger.debug('send_dgram')
-        client_addr = (hxs_conn.client_id, udp_sid)
-        if client_addr not in cls.relay_store:
-            if cls.udp_mode in (0, 1, 2):
-                relay = UDPRelay(cls, hxs_conn.udp_uid, client_addr, cls.settings)
-                await relay.bind()
-            else:
-                relay = get_relay2(hxs_conn.client_id, cls.settings)
-            cls.relay_store[client_addr] = relay
         cls.hxs_conn_store[hxs_conn.client_id] = hxs_conn
-        relay = cls.relay_store[client_addr]
-        if data:
+        if udp_sid != b'\x00\x00\x00\x00':
+            client_addr = (hxs_conn.client_id, udp_sid)
+            if client_addr not in cls.relay_store:
+                if cls.udp_mode in (0, 1, 2):
+                    relay = UDPRelay(cls, hxs_conn.udp_uid, client_addr, cls.settings)
+                    await relay.bind()
+                else:
+                    relay = get_relay2(hxs_conn.client_id, cls.settings)
+                cls.relay_store[client_addr] = relay
+            relay = cls.relay_store[client_addr]
             addr, dgram = parse_dgram(data)
             await relay.send_dgram(addr, dgram, cls, client_addr)
 
