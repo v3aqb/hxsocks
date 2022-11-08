@@ -295,7 +295,7 @@ class HXsocksHandler:
             return True
         # access control
         try:
-            self.user_mgr.user_access_ctrl(self.address[1], addr, self.client_address, self.__key)
+            self.user_mgr.user_access_ctrl(self.address[1], (addr, port), self.client_address, self.__key, 0)
         except ValueError as err:
             self.logger.warning('access denied! %s:%s, %s %s', addr, port, err)
             return
@@ -329,7 +329,7 @@ class HXsocksHandler:
 
         # access log
         traffic = (context.traffic_from_client, context.traffic_from_remote)
-        self.user_mgr.user_access_log(self.address[1], addr, traffic, self.client_address, self.__key)
+        self.user_mgr.user_access_log(self.address[1], (addr, port), traffic, self.client_address, self.__key, 0)
         if not remote_writer.is_closing():
             remote_writer.close()
         try:

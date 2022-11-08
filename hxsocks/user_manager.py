@@ -136,19 +136,20 @@ class UserManager:
         del self.pkeyuser[pkey]
         self.userpkeys[user].remove(pkey)
 
-    def user_access_ctrl(self, server_port, host, ipaddr, user):
+    def user_access_ctrl(self, server_port, address, client_ip, user, cmd):
         # access control, called before each request
         # int server_port
-        # str host: requested hostname
-        # str ipaddr: client ipaddress
+        # tuple address: (host, port)
+        # str client_ip: client ipaddress
+        # int cmd: 0 for connect, 1 for udp
         # raise ValueError if denied
         if user not in self.user_tag:
             return
         if 'noporn' in self.user_tag[user]:
-            if self.porn_filter.is_porn(host):
+            if self.porn_filter.is_porn(address[0]):
                 raise ValueError('porn block')
 
-    def user_access_log(self, server_port, host, traffic, ipaddr, user):
+    def user_access_log(self, server_port, address, traffic, client_ip, user, cmd):
         # log user access, called after each request
         # traffic: (upload, download) in bytes
         pass

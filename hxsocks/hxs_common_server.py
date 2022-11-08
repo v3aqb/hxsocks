@@ -44,7 +44,7 @@ HXS2_METHOD = [
 
 class ForwardContext:
     def __init__(self, host, logger):
-        self.host = host
+        self.host = host  # (host, port)
         self.logger = logger
         self.drain_lock = asyncio.Lock()
         self.last_active = time.monotonic()
@@ -282,7 +282,7 @@ class HxsCommon:
         timelog = time.monotonic()
         self._stream_context[stream_id] = ForwardContext(host, self.logger)
         try:
-            self.user_mgr.user_access_ctrl(self.server_addr[1], host, self.client_address, self.user)
+            self.user_mgr.user_access_ctrl(self.server_addr[1], (host, port), self.client_address, self.user, 0)
             reader, writer = await open_connection(host, port, self._proxy,
                                                    self.settings.tcp_conn_timeout,
                                                    self.settings.tcp_nodelay)
@@ -399,7 +399,8 @@ class HxsCommon:
                                       self._stream_context[stream_id].host,
                                       traffic,
                                       self.client_address,
-                                      self.user)
+                                      self.user,
+                                      0)
 
     async def close_stream(self, stream_id):
         if not self._stream_context[stream_id].resume_reading.is_set():
