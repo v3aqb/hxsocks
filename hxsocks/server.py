@@ -118,8 +118,7 @@ class HXsocksHandler:
         self.address = self.server.address
         self.settings = server.settings
 
-        self.encryptor = Encryptor(self.server.psk, self.server.method)
-        self.__key = self.server.psk
+        self.encryptor = Encryptor(self.server.psk, self.server.method, check_iv=True, role=1)
         self._buf = b''
 
         self.client_address = None
@@ -174,7 +173,7 @@ class HXsocksHandler:
                 raise ValueError('header_type=1, except 0')
             diff = time.time() - timestamp
             if abs(diff) > 30:
-                raise ValueError('timestamp error, diff: %.4f' % diff)
+                raise ValueError('timestamp error, diff: %.4fs' % diff)
             header = await self.client_reader.readexactly(length + 16)
         elif self.server.aead:
             _len = await self.client_reader.readexactly(self.encryptor.iv_len + 18)
@@ -253,7 +252,7 @@ class HXsocksHandler:
 
             reply = reply + bytes((mode, )) + bytes(random.randint(64, 1024))
             reply = struct.pack('>H', len(reply)) + reply
-            client_writer.write(self.encryptor.encrypt(reply, role=1))
+            client_writer.write(self.encryptor.encrypt(reply))
 
             conn = Hxs2Connection(client_reader,
                                   client_writer,
@@ -295,7 +294,7 @@ class HXsocksHandler:
             return True
         # access control
         try:
-            self.user_mgr.user_access_ctrl(self.address[1], (addr, port), self.client_address, self.__key, 0)
+            self.user_mgr.user_access_ctrl(self.address[1], (addr, port), self.client_address, self.server.psk, 0)
         except ValueError as err:
             self.logger.warning('access denied! %s:%s, %s %s', addr, port, err)
             return
@@ -329,7 +328,7 @@ class HXsocksHandler:
 
         # access log
         traffic = (context.traffic_from_client, context.traffic_from_remote)
-        self.user_mgr.user_access_log(self.address[1], (addr, port), traffic, self.client_address, self.__key, 0)
+        self.user_mgr.user_access_log(self.address[1], (addr, port), traffic, self.client_address, self.server.psk, 0)
         if not remote_writer.is_closing():
             remote_writer.close()
         try:
@@ -391,7 +390,7 @@ class HXsocksHandler:
 
             context.traffic_from_remote += len(data)
 
-            data = self.encryptor.encrypt(data, role=1)
+            data = self.encryptor.encrypt(data)
             try:
                 write_to.write(data)
                 await write_to.drain()
