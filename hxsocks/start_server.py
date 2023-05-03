@@ -5,7 +5,7 @@ import hashlib
 
 from hxsocks.settings import Settings
 from hxsocks.user_manager import UserManager, ECC
-from hxsocks.server import Server, HXsocksHandler
+from hxsocks.server import HxsServer
 from hxsocks.hxs3_server import hxs3_server
 
 try:
@@ -31,7 +31,7 @@ def start_hxs_server(confpath):
     user_mgr = UserManager(cert_path, Settings)
     cert = user_mgr.server_cert.get_pub_key()
     cert_hash = hashlib.sha256(cert).hexdigest()[:8]
-    sys.stderr.write('load server cert %s\n' % cert_hash)
+    sys.stderr.write(f'load server cert {cert_hash}\n')
 
     servers = Settings.servers
 
@@ -42,7 +42,7 @@ def start_hxs_server(confpath):
     server_list = []
     for server in servers:
         if server.startswith(('ss', 'hxs2')):
-            server_ = Server(HXsocksHandler, server, user_mgr, Settings)
+            server_ = HxsServer(server, user_mgr, Settings)
             server_.start()
             server_list.append(server_)
             if Settings.udp_enable:

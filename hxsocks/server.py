@@ -54,30 +54,31 @@ class ForwardContext:
         self.traffic_from_remote = 0
 
 
-class Server:
-    def __init__(self, handler_class, serverinfo, user_mgr, settings):
-        self._handler_class = handler_class
+class HxsServer:
+    def __init__(self, serverinfo, user_mgr, settings):
         self.serverinfo = serverinfo
         self.user_mgr = user_mgr
         self.settings = settings
 
         self.server = None
+        self._handler_class = None
+        self.ss_enable = False
 
         parse = urllib.parse.urlparse(serverinfo)
         query = urllib.parse.parse_qs(parse.query)
         if parse.scheme == 'ss':
             self.psk, self.method = parse.password, parse.username
             self.ss_enable = True
-        elif 'hxs' in parse.scheme:
+            self._handler_class = HXsocksHandler
+        elif parse.scheme == 'hxs2':
             self.psk = query.get('PSK', [''])[0]
             self.method = query.get('method', [DEFAULT_METHOD])[0]
             self.ss_enable = self.psk and int(query.get('ss', ['0'])[0])
+            self._handler_class = HXsocksHandler
         else:
-            raise ValueError('bad serverinfo: {}'.format(self.serverinfo))
+            raise ValueError(f'bad serverinfo: {self.serverinfo}')
 
         self.aead = is_aead(self.method)
-        if 'ss' not in query:
-            self.ss_enable = self.psk and not self.aead
 
         # HTTP proxy only
         proxy = query.get('proxy', [''])[0]
@@ -85,7 +86,7 @@ class Server:
 
         self.address = (parse.hostname, parse.port)
 
-        self.logger = logging.getLogger('hxs_%d' % self.address[1])
+        self.logger = logging.getLogger(f'hxs_{self.address[1]}')
         self.logger.setLevel(self.settings.log_level)
         hdr = logging.StreamHandler()
         formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
@@ -237,7 +238,7 @@ class HXsocksHandler:
             data = payload.read(req_len)
             data = io.BytesIO(data)
 
-            pklen = data.read(1)[0]
+            pklen = data.read(1)[0]  # 158
             client_pkey = data.read(pklen)
             client_auth = data.read(32)
             mode = data.read(1)[0]
