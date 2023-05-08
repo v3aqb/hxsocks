@@ -19,6 +19,9 @@ EOF_RECV = 2  # RECV END_STREAM
 CLOSED = 3
 
 REMOTE_WRITE_BUFFER = 524288
+HANDSHAKE_SIZE = 128
+HEADER_SIZE = 128
+PING_SIZE = 128
 
 DATA = 0
 HEADERS = 1
@@ -230,13 +233,13 @@ class HxsCommon:
                             if self._stream_context[stream_id].stream_status == CLOSED:
                                 asyncio.ensure_future(self.close_stream(stream_id))
                     else:
-                        self.logger.error('frame_type == HEADERS, wrong stream_id!')
+                        self.logger.error('frame_type == HEADERS, stream_id %s, flags: %s', stream_id, frame_flags)
                 elif frame_type == RST_STREAM:  # 3
                     asyncio.ensure_future(self.close_stream(stream_id))
                 elif frame_type == SETTINGS:
                     if stream_id == 1:
                         self._settings_async_drain = True
-                        await self.send_frame(SETTINGS, 0, 1, bytes(random.randint(64, 256)))
+                        await self.send_frame(SETTINGS, 0, 1, bytes(random.randint(PING_SIZE // 8, PING_SIZE)))
                 elif frame_type == PING:  # 6
                     if frame_flags == 0:
                         await self.send_frame(PING, PONG, 0, bytes(random.randint(64, 256)))
@@ -290,7 +293,7 @@ class HxsCommon:
         except (OSError, asyncio.TimeoutError, socket.gaierror) as err:
             # tell client request failed.
             self.logger.error('connect %s:%s failed: %r, proxy %r', host, port, err, self._proxy)
-            data = b'\x01' * random.randint(64, 256)
+            data = b'\x01' * random.randint(HEADER_SIZE // 16, HEADER_SIZE)
             await self.send_frame(RST_STREAM, 0, stream_id, data)
         else:
             # tell client request success, header frame, first byte is \x00
@@ -304,7 +307,7 @@ class HxsCommon:
                 writer.close()
                 await writer.wait_closed()
                 return
-            data = bytes(random.randint(64, 256))
+            data = bytes(random.randint(HEADER_SIZE // 16, HEADER_SIZE))
             # registor stream
             self._stream_writer[stream_id] = writer
             # start forward from remote_reader to client_writer
@@ -336,14 +339,14 @@ class HxsCommon:
         self._stream_context[stream_id].data_sent(len(data))
         if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
             await self.send_one_data_frame(stream_id, data)
-        elif len(data) > 16386 and random.random() < 0.1:
+        elif len(data) > 16386 and random.random() < 0.2:
             data = io.BytesIO(data)
-            data_ = data.read(random.randint(256, 16386 - 22))
+            data_ = data.read(random.randint(64, 16386 - 278))
             while data_:
                 await self.send_one_data_frame(stream_id, data_)
                 if random.random() < 0.2:
-                    await self.send_frame(PING, 0, 0, bytes(random.randint(256, 1024)))
-                data_ = data.read(random.randint(256, 8192 - 22))
+                    await self.send_frame(PING, 0, 0, bytes(random.randint(64, 1024)))
+                data_ = data.read(random.randint(64, 8192 - 278))
                 await asyncio.sleep(0)
         else:
             await self.send_one_data_frame(stream_id, data)
@@ -373,7 +376,7 @@ class HxsCommon:
 
             if not data:
                 await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id,
-                                      bytes(random.randint(8, 256)))
+                                      bytes(random.randint(HEADER_SIZE // 16, HEADER_SIZE)))
                 self._stream_context[stream_id].stream_status |= EOF_SENT
                 if self._stream_context[stream_id].stream_status == CLOSED:
                     await self.close_stream(stream_id)
@@ -406,7 +409,7 @@ class HxsCommon:
         if not self._stream_context[stream_id].resume_reading.is_set():
             self._stream_context[stream_id].resume_reading.set()
         if self._stream_context[stream_id].stream_status != CLOSED:
-            await self.send_frame(RST_STREAM, 0, stream_id, bytes(random.randint(64, 256)))
+            await self.send_frame(RST_STREAM, 0, stream_id, bytes(random.randint(HEADER_SIZE // 16, HEADER_SIZE)))
             self._stream_context[stream_id].stream_status = CLOSED
         if stream_id in self._stream_writer:
             writer = self._stream_writer[stream_id]
@@ -422,7 +425,7 @@ class HxsCommon:
     def close_relay(self, stream_id):
         if self._stream_context[stream_id].stream_status == OPEN:
             self._stream_context[stream_id].stream_status = CLOSED
-            asyncio.ensure_future(self.send_frame(RST_STREAM, 0, stream_id, bytes(random.randint(64, 256))))
+            asyncio.ensure_future(self.send_frame(RST_STREAM, 0, stream_id, bytes(random.randint(HEADER_SIZE // 16, HEADER_SIZE))))
         if stream_id in self._stream_writer:
             del self._stream_writer[stream_id]
 
@@ -444,10 +447,10 @@ class HxsCommon:
         async with self._stream_context[stream_id].drain_lock:
             try:
                 # tell client to stop reading
-                await self.send_frame(WINDOW_UPDATE, 1, stream_id, bytes(random.randint(64, 256)))
+                await self.send_frame(WINDOW_UPDATE, 1, stream_id, bytes(random.randint(HEADER_SIZE // 16, HEADER_SIZE)))
                 await self._stream_writer[stream_id].drain()
                 # tell client to resume reading
-                await self.send_frame(WINDOW_UPDATE, 0, stream_id, bytes(random.randint(64, 256)))
+                await self.send_frame(WINDOW_UPDATE, 0, stream_id, bytes(random.randint(HEADER_SIZE // 16, HEADER_SIZE)))
             except OSError:
                 await self.close_stream(stream_id)
                 return

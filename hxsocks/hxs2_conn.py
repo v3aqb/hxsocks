@@ -23,6 +23,7 @@ import struct
 
 from hxcrypto import InvalidTag
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE
 
 OPEN = 0
 EOF_SENT = 1   # SENT END_STREAM
@@ -58,7 +59,7 @@ class Hxs2Connection(HxsCommon):
         self._client_reader = reader
         self._client_writer = writer
         self.client_address = writer.get_extra_info('peername')
-        self._client_writer.transport.set_write_buffer_limits(524288)
+        self._client_writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
 
         self._proxy = proxy
         self.server_addr = server_addr

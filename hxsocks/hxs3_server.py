@@ -19,13 +19,12 @@ from hxcrypto import InvalidTag
 
 from hxsocks.util import parse_hostport
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE
 
 OPEN = 0
 EOF_SENT = 1   # SENT END_STREAM
 EOF_RECV = 2  # RECV END_STREAM
 CLOSED = 3
-
-REMOTE_WRITE_BUFFER = 524288
 
 DATA = 0
 HEADERS = 1
@@ -135,7 +134,8 @@ class hxs3_handler(HxsCommon):
             await self.play_dead()
             return
 
-        reply = reply + chr(self._mode).encode() + bytes(random.randint(64, 1024))
+        reply = reply + chr(self._mode).encode() + \
+            bytes(random.randint(HANDSHAKE_SIZE // 16, HANDSHAKE_SIZE))
         try:
             await self.websocket.send(reply)
         except ConnectionClosed:

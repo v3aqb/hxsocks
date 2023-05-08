@@ -31,7 +31,7 @@ import asyncio
 import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
-from hxsocks.hxs2_conn import Hxs2Connection
+from hxsocks.hxs2_conn import Hxs2Connection, HANDSHAKE_SIZE
 from hxsocks.util import open_connection, parse_hostport
 
 SS_SUBKEY = "ss-subkey"
@@ -251,7 +251,8 @@ class HXsocksHandler:
                 await self.play_dead()
                 return
 
-            reply = reply + bytes((mode, )) + bytes(random.randint(64, 1024))
+            reply = reply + bytes((mode, )) + \
+                bytes(random.randint(HANDSHAKE_SIZE // 16, HANDSHAKE_SIZE))
             reply = struct.pack('>H', len(reply)) + reply
             client_writer.write(self.encryptor.encrypt(reply))
 
