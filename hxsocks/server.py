@@ -1,7 +1,7 @@
 
 # server.py - hxsocks server
 
-# Copyright (C) 2016 - 2018, v3aqb
+# Copyright (C) 2016 - 2023, v3aqb
 
 # This file is a part of hxsocks.
 
@@ -32,6 +32,7 @@ import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
 from hxsocks.hxs2_conn import Hxs2Connection, HANDSHAKE_SIZE
+from hxsocks.hxs4_handler import HXsocks4Handler
 from hxsocks.util import open_connection, parse_hostport
 
 SS_SUBKEY = "ss-subkey"
@@ -75,6 +76,11 @@ class HxsServer:
             self.method = query.get('method', [DEFAULT_METHOD])[0]
             self.ss_enable = self.psk and int(query.get('ss', ['0'])[0])
             self._handler_class = HXsocksHandler
+        elif parse.scheme == 'hxs4':
+            self.psk = query.get('PSK', [''])[0]
+            self.method = query.get('method', [DEFAULT_METHOD])[0]
+            self.ss_enable = self.psk and int(query.get('ss', ['0'])[0])
+            self._handler_class = HXsocks4Handler
         else:
             raise ValueError(f'bad serverinfo: {self.serverinfo}')
 

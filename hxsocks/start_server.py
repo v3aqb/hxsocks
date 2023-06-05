@@ -41,7 +41,7 @@ def start_hxs_server(confpath):
 
     server_list = []
     for server in servers:
-        if server.startswith(('ss', 'hxs2')):
+        if server.startswith(('ss', 'hxs2', 'hxs4')):
             server_ = HxsServer(server, user_mgr, Settings)
             server_.start()
             server_list.append(server_)

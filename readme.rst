@@ -15,6 +15,7 @@ new protocol
 --------
 
 hxsocks3: a websocket port of hxsocks2, works perfectly with nginx.
+hxsocks4: upgraded version of hxsocks2, drop shadowsocks support.
 
 features
 --------
