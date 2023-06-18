@@ -62,6 +62,8 @@ configure file example
     users:
         user: password
         user2: password2
+    conn_limit: 20         # connection limit per user
+    prefer_ipv4: false
     tcp_nodelay: false
     tcp_timeout: 600
     tcp_conn_timeout: 12   # tcp create connection timeout

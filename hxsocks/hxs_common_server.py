@@ -287,8 +287,7 @@ class HxsCommon:
         try:
             self.user_mgr.user_access_ctrl(self.server_addr[1], (host, port), self.client_address, self.user, 0)
             reader, writer = await open_connection(host, port, self._proxy,
-                                                   self.settings.tcp_conn_timeout,
-                                                   self.settings.tcp_nodelay)
+                                                   self.settings)
             writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
         except (OSError, asyncio.TimeoutError, socket.gaierror) as err:
             # tell client request failed.

@@ -14,6 +14,7 @@ class Settings:
     udp_enable = False
     udp_timeout = 90
     udp_mode = 0
+    prefer_ipv4 = 0
 
     users = {}
 
@@ -22,7 +23,8 @@ class Settings:
         with open(confpath, 'r') as ymlfile:
             cfg = yaml.safe_load(ymlfile)
 
-        cls.conn_limit = cfg.get('limit', cls.conn_limit)
+        cls.conn_limit = cfg.get('conn_limit', cls.conn_limit)
+        cls.prefer_ipv4 = cfg.get('prefer_ipv4', cls.prefer_ipv4)
         log_level = cfg.get('log_level', cls.log_level)
         cls.log_level = log_level
         if isinstance(log_level, str):

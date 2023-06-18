@@ -73,16 +73,24 @@ async def connect_socks5(addr, port, proxy):
     return remote_reader, remote_writer
 
 
-async def open_connection(addr, port, proxy, timeout=8, nodelay=False):
+async def open_connection(addr, port, proxy, settings):
     # do security check here
     data = await request_is_loopback(addr)
     if data:
         raise ValueError('connect to localhost denied!')
-
+    timeout = settings.tcp_conn_timeout
+    nodelay = settings.tcp_nodelay
     # create connection
     if proxy:
         fut = connect_socks5(addr, port, proxy)
         remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
+    elif settings.prefer_ipv4:
+        try:
+            fut = asyncio.open_connection(addr, port, limit=262144, family=socket.AF_INET)
+            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
+        except socket.gaierror:
+            fut = asyncio.open_connection(addr, port, limit=262144, family=socket.AF_INET6)
+            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
     else:
         try:
             fut = asyncio.open_connection(addr, port, limit=262144, happy_eyeballs_delay=0.25)

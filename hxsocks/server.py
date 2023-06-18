@@ -314,8 +314,7 @@ class HXsocksHandler:
             remote_reader, remote_writer = await open_connection(addr,
                                                                  port,
                                                                  self.server.proxy,
-                                                                 self.settings.tcp_conn_timeout,
-                                                                 self.settings.tcp_nodelay)
+                                                                 self.settings)
         except (ConnectionError, asyncio.TimeoutError, socket.gaierror) as err:
             self.logger.error('connect to %s:%s failed! %r', addr, port, err)
             return
