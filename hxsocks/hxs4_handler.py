@@ -30,11 +30,7 @@ import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, AEncryptor
 from hxsocks.hxs2_conn import Hxs2Connection
-
-DEFAULT_METHOD = 'chacha20-ietf-poly1305'  # for hxsocks2 handshake
-DEFAULT_HASH = 'SHA256'
-MAC_LEN = 16
-CTX = 'hxsocks2'
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE
 
 
 class HXsocks4Handler:
@@ -118,7 +114,7 @@ class HXsocks4Handler:
             await self.play_dead()
             return
 
-        reply = reply + bytes((mode, )) + bytes(random.randint(64, 1024))
+        reply = reply + bytes((mode, )) + bytes(random.randint(HANDSHAKE_SIZE // 16, HANDSHAKE_SIZE))
         reply = self.encryptor.encrypt(reply)
         client_writer.write(struct.pack('>H', len(reply)) + reply)
 

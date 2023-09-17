@@ -25,29 +25,8 @@ from hxcrypto import InvalidTag
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
 from hxsocks.hxs_common_server import HANDSHAKE_SIZE
 
-OPEN = 0
-EOF_SENT = 1   # SENT END_STREAM
-EOF_RECV = 2  # RECV END_STREAM
-CLOSED = 3
-
 REMOTE_WRITE_BUFFER = 524288
 READ_FRAME_TIMEOUT = 4
-
-DATA = 0
-HEADERS = 1
-# PRIORITY = 2
-RST_STREAM = 3
-SETTINGS = 4
-# PUSH_PROMISE = 5
-PING = 6
-GOAWAY = 7
-WINDOW_UPDATE = 8
-# CONTINUATION = 9
-UDP_ASSOCIATE = 20
-UDP_DGRAM2 = 21
-
-PONG = 1
-END_STREAM_FLAG = 1
 
 
 class Hxs2Connection(HxsCommon):
