@@ -30,7 +30,7 @@ import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, AEncryptor
 from hxsocks.hxs2_conn import Hxs2Connection
-from hxsocks.hxs_common_server import HANDSHAKE_SIZE
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CTX
 
 
 class HXsocks4Handler:
