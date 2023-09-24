@@ -23,7 +23,6 @@ import struct
 
 from hxcrypto import InvalidTag
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
-from hxsocks.hxs_common_server import HANDSHAKE_SIZE
 
 REMOTE_WRITE_BUFFER = 524288
 READ_FRAME_TIMEOUT = 4

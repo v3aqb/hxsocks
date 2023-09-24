@@ -31,7 +31,8 @@ import asyncio
 import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
-from hxsocks.hxs2_conn import Hxs2Connection, HANDSHAKE_SIZE
+from hxsocks.hxs2_conn import Hxs2Connection
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE
 from hxsocks.hxs4_handler import HXsocks4Handler
 from hxsocks.util import open_connection, parse_hostport
 
@@ -39,9 +40,6 @@ SS_SUBKEY = "ss-subkey"
 SS_SUBKEY_2022 = 'shadowsocks 2022 session subkey'
 
 DEFAULT_METHOD = 'chacha20-ietf-poly1305'  # for hxsocks2 handshake
-DEFAULT_HASH = 'SHA256'
-MAC_LEN = 16
-CTX = b'hxsocks'
 
 
 class ForwardContext:
@@ -258,7 +256,7 @@ class HXsocksHandler:
                 return
 
             reply = reply + bytes((mode, )) + \
-                bytes(random.randint(HANDSHAKE_SIZE // 16, HANDSHAKE_SIZE))
+                bytes(random.randint(HANDSHAKE_SIZE // 8, HANDSHAKE_SIZE))
             reply = struct.pack('>H', len(reply)) + reply
             client_writer.write(self.encryptor.encrypt(reply))
 

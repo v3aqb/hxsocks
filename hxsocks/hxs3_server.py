@@ -114,7 +114,7 @@ class hxs3_handler(HxsCommon):
             return
 
         reply = reply + chr(self._mode).encode() + \
-            bytes(random.randint(HANDSHAKE_SIZE // 16, HANDSHAKE_SIZE))
+            bytes(random.randint(HANDSHAKE_SIZE // 8, HANDSHAKE_SIZE))
         try:
             await self.websocket.send(reply)
         except ConnectionClosed:
