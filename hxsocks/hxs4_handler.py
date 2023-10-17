@@ -115,7 +115,7 @@ class HXsocks4Handler:
             await self.play_dead()
             return
 
-        reply = reply + bytes((mode, )) + bytes(random.randint(HANDSHAKE_SIZE // 8, HANDSHAKE_SIZE))
+        reply = reply + bytes((mode, )) + bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
         reply = self.encryptor.encrypt(reply)
         client_writer.write(struct.pack('>H', len(reply)) + reply)
 

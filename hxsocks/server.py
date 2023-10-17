@@ -257,7 +257,7 @@ class HXsocksHandler:
                 return
 
             reply = reply + bytes((mode, )) + \
-                bytes(random.randint(HANDSHAKE_SIZE // 8, HANDSHAKE_SIZE))
+                bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
             reply = struct.pack('>H', len(reply)) + reply
             client_writer.write(self.encryptor.encrypt(reply))
 
