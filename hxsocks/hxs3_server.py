@@ -19,7 +19,7 @@ from hxcrypto import InvalidTag
 
 from hxsocks.util import parse_hostport
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
-from hxsocks.hxs_common_server import HANDSHAKE_SIZE
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE, READ_AUTH_TIMEOUT
 
 
 class hxs3_server:
@@ -89,7 +89,7 @@ class hxs3_handler(HxsCommon):
 
         try:
             fut = self.websocket.recv()
-            client_auth = await asyncio.wait_for(fut, timeout=12)
+            client_auth = await asyncio.wait_for(fut, timeout=READ_AUTH_TIMEOUT)
         except (asyncio.TimeoutError, ConnectionClosed) as err:
             self.logger.error('read client auth failed. client: %s, %r', self.client_address, err)
             return

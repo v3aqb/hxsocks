@@ -30,7 +30,7 @@ import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, AEncryptor
 from hxsocks.hxs2_conn import Hxs2Connection
-from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CTX
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CTX, CLIENT_WRITE_BUFFER, READ_AUTH_TIMEOUT
 
 
 class HXsocks4Handler:
@@ -53,7 +53,7 @@ class HXsocks4Handler:
         self.client_reader = None
 
     async def handle(self, client_reader, client_writer):
-        client_writer.transport.set_write_buffer_limits(262144)
+        client_writer.transport.set_write_buffer_limits(CLIENT_WRITE_BUFFER)
         if self.settings.tcp_nodelay:
             soc = client_writer.transport.get_extra_info('socket')
             soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -90,7 +90,8 @@ class HXsocks4Handler:
         self.logger.debug('incoming connection %s', self.client_address)
 
         try:
-            header = await self.read_request_headers()
+            fut = self.read_request_headers()
+            header = await asyncio.wait_for(fut, timeout=READ_AUTH_TIMEOUT)
         except (IVError, InvalidTag, ValueError) as err:
             self.logger.error('read request header error, %s %r', self.client_address, err)
             await self.play_dead()

@@ -22,10 +22,7 @@ import asyncio
 import struct
 
 from hxcrypto import InvalidTag
-from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
-
-REMOTE_WRITE_BUFFER = 524288
-READ_FRAME_TIMEOUT = 4
+from hxsocks.hxs_common_server import HxsCommon, ReadFrameError, CLIENT_WRITE_BUFFER, READ_FRAME_TIMEOUT
 
 
 class Hxs2Connection(HxsCommon):
@@ -37,7 +34,7 @@ class Hxs2Connection(HxsCommon):
         self._client_reader = reader
         self._client_writer = writer
         self.client_address = writer.get_extra_info('peername')
-        self._client_writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
+        self._client_writer.transport.set_write_buffer_limits(CLIENT_WRITE_BUFFER)
 
         self._proxy = proxy
         self.server_addr = server_addr

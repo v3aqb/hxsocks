@@ -219,7 +219,8 @@ class HXsocksHandler:
         self.logger.debug('incoming connection %s', self.client_address)
 
         try:
-            addr_type, addr, port, payload = await self.read_request_headers()
+            fut = self.read_request_headers()
+            addr_type, addr, port, payload = await asyncio.wait_for(fut, timeout=12)
         except (IVError, InvalidTag, ValueError) as err:
             self.logger.error('read request header error, %s %r', self.client_address, err)
             await self.play_dead()
