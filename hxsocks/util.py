@@ -50,7 +50,7 @@ async def request_is_loopback(addr):
 
 
 async def connect_socks5(addr, port, proxy):
-    fut = asyncio.open_connection(proxy[0], proxy[1], limit=131072)
+    fut = asyncio.open_connection(proxy[0], proxy[1], limit=65536)
     remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=2)
     remote_writer.write(b"\x05\x01\x00")
     data = await remote_reader.readexactly(2)
@@ -86,19 +86,18 @@ async def open_connection(addr, port, proxy, settings):
         remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
     elif settings.prefer_ipv4:
         try:
-            fut = asyncio.open_connection(addr, port, limit=262144, family=socket.AF_INET)
+            fut = asyncio.open_connection(addr, port, limit=65536, family=socket.AF_INET)
             remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
         except socket.gaierror:
-            fut = asyncio.open_connection(addr, port, limit=262144, family=socket.AF_INET6)
+            fut = asyncio.open_connection(addr, port, limit=65536, family=socket.AF_INET6)
             remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
     else:
         try:
-            fut = asyncio.open_connection(addr, port, limit=262144, happy_eyeballs_delay=0.25)
+            fut = asyncio.open_connection(addr, port, limit=65536, happy_eyeballs_delay=0.25)
             remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
         except TypeError:
-            fut = asyncio.open_connection(addr, port, limit=262144)
+            fut = asyncio.open_connection(addr, port, limit=65536)
             remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
-    remote_writer.transport.set_write_buffer_limits(262144)
     if nodelay:
         soc = remote_writer.transport.get_extra_info('socket')
         soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

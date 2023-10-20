@@ -32,7 +32,7 @@ import asyncio.streams
 
 from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
 from hxsocks.hxs2_conn import Hxs2Connection
-from hxsocks.hxs_common_server import HANDSHAKE_SIZE
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CLIENT_WRITE_BUFFER, REMOTE_WRITE_BUFFER
 from hxsocks.hxs4_handler import HXsocks4Handler
 from hxsocks.util import open_connection, parse_hostport
 
@@ -110,7 +110,7 @@ class HxsServer:
         self.server = await asyncio.start_server(self.handle,
                                                  self.address[0],
                                                  self.address[1],
-                                                 limit=262144)
+                                                 limit=131072)
 
 
 class HXsocksHandler:
@@ -153,7 +153,7 @@ class HXsocksHandler:
         return _buf
 
     async def handle(self, client_reader, client_writer):
-        client_writer.transport.set_write_buffer_limits(262144)
+        client_writer.transport.set_write_buffer_limits(CLIENT_WRITE_BUFFER)
         if self.settings.tcp_nodelay:
             soc = client_writer.transport.get_extra_info('socket')
             soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -314,6 +314,7 @@ class HXsocksHandler:
                                                                  port,
                                                                  self.server.proxy,
                                                                  self.settings)
+            remote_writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
         except (ConnectionError, asyncio.TimeoutError, socket.gaierror) as err:
             self.logger.error('connect to %s:%s failed! %r', addr, port, err)
             return

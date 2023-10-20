@@ -19,7 +19,7 @@ from hxcrypto import InvalidTag
 
 from hxsocks.util import parse_hostport
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError
-from hxsocks.hxs_common_server import HANDSHAKE_SIZE, READ_AUTH_TIMEOUT
+from hxsocks.hxs_common_server import HANDSHAKE_SIZE, READ_AUTH_TIMEOUT, CLIENT_WRITE_BUFFER
 
 
 class hxs3_server:
@@ -49,9 +49,9 @@ class hxs3_server:
                                                       ping_interval=None,
                                                       ping_timeout=None,
                                                       max_size=2 ** 17,
-                                                      max_queue=2 ** 4,
-                                                      read_limit=2 ** 16,
-                                                      write_limit=2 ** 16,
+                                                      max_queue=2,
+                                                      read_limit=2 ** 18,
+                                                      write_limit=CLIENT_WRITE_BUFFER,
                                                       ))
 
     async def handle(self, websocket, path):
