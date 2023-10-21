@@ -30,7 +30,7 @@ class Hxs2Connection(HxsCommon):
     def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, settings):
         super().__init__()
         self._skey = skey
-        self.mode = mode
+        self._mode = mode
         self._client_reader = reader
         self._client_writer = writer
         self.client_address = writer.get_extra_info('peername')

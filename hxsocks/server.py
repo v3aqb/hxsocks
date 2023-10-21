@@ -256,7 +256,11 @@ class HXsocksHandler:
                 await self.play_dead()
                 return
 
-            reply = reply + bytes((mode, )) + \
+            mode_s = 0
+            if mode & 1:
+                mode_s |= 1
+
+            reply = reply + bytes((mode_s, )) + \
                 bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
             reply = struct.pack('>H', len(reply)) + reply
             client_writer.write(self.encryptor.encrypt(reply))
@@ -265,7 +269,7 @@ class HXsocksHandler:
                                   client_writer,
                                   client,
                                   shared_secret,
-                                  mode,
+                                  mode_s,
                                   self.server.proxy,
                                   self.user_mgr,
                                   self.address,

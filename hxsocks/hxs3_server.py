@@ -102,7 +102,11 @@ class hxs3_handler(HxsCommon):
         pklen = data.read(1)[0]
         client_pkey = data.read(pklen)
         client_auth = data.read(32)
-        self._mode = data.read(1)[0]
+        mode = data.read(1)[0]
+
+        self._mode = 0
+        if mode & 1:
+            self._mode |= 1
 
         try:
             client, reply, self._skey = self.user_mgr.hxs2_auth(client_pkey, client_auth)

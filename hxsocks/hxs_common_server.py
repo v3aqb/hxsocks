@@ -143,7 +143,7 @@ class HxsCommon:
             frame_data = self._cipher.decrypt(frame_data)
         else:
             error = None
-            if self._mode == 1:
+            if self._mode & 1:
                 self.bufsize += 16
                 self._cipher = EncryptorStream(self._skey, 'rc4-md5', check_iv=False)
                 self._skey = None
@@ -160,7 +160,7 @@ class HxsCommon:
                     error = err
                     continue
             else:
-                self.logger.error('skey: %r', self._skey)
+                self.logger.error('unable to decrypt frame. user: %r', self.user)
                 raise error
         return frame_data
 
