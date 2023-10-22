@@ -18,12 +18,12 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import os
 import socket
 import struct
 import io
 import random
 import hashlib
-import base64
 
 import asyncio
 import asyncio.streams
@@ -51,6 +51,7 @@ class HXsocks4Handler:
 
         self.client_address = None
         self.client_reader = None
+        self.client_writer = None
 
     async def handle(self, client_reader, client_writer):
         client_writer.transport.set_write_buffer_limits(CLIENT_WRITE_BUFFER)
@@ -70,23 +71,23 @@ class HXsocks4Handler:
             pass
 
     async def read_request_headers(self):
-        _len = await self.client_reader.readexactly(2)
-        _len, = struct.unpack("!H", _len)
-        header = await self.client_reader.readexactly(_len)
-
-        try:
-            header = self.encryptor.decrypt(header)
-        except InvalidTag:
-            header = header.decode('latin1').translate(self.table).encode()
-            header = base64.b64decode(header)
-            header = self.encryptor.decrypt(header)
-
-        header = io.BytesIO(header)
-        return header
+        data = b''
+        for _ in range(10):
+            try:
+                fut = self.client_reader.read(self.bufsize)
+                data += await asyncio.wait_for(fut, timeout=4)
+                if len(data) > self.encryptor.iv_len:
+                    header = self.encryptor.decrypt(data)
+                    header = io.BytesIO(header)
+                    return header
+            except InvalidTag:
+                continue
+        raise ValueError('unable to decrypt request')
 
     async def _handle(self, client_reader, client_writer):
         self.client_address = client_writer.get_extra_info('peername')
         self.client_reader = client_reader
+        self.client_writer = client_writer
         self.logger.debug('incoming connection %s', self.client_address)
 
         try:
@@ -120,7 +121,7 @@ class HXsocks4Handler:
             mode_s |= 1
         reply = reply + bytes((mode_s, )) + bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
         reply = self.encryptor.encrypt(reply)
-        client_writer.write(struct.pack('>H', len(reply)) + reply)
+        client_writer.write(reply)
 
         conn = Hxs2Connection(client_reader,
                               client_writer,
@@ -141,12 +142,16 @@ class HXsocks4Handler:
 
     async def play_dead(self):
         count = random.randint(12, 30)
+        sent = False
         for _ in range(count):
             timeout = random.random()
             fut = self.client_reader.read(self.bufsize)
             try:
                 await asyncio.wait_for(fut, timeout)
             except asyncio.TimeoutError:
-                continue
+                if sent:
+                    return
             except OSError:
                 return
+            self.client_writer.write(os.urandom(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE)))
+            sent = True
