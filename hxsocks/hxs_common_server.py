@@ -111,8 +111,8 @@ class HxsCommon:
     FRAME_SPLIT_FREQ = _FRAME_SPLIT_FREQ
     STREAM_TIMEOUT = _STREAM_TIMEOUT
 
-    def __init__(self):
-        self._mode = 0
+    def __init__(self, mode):
+        self._mode = mode
         self._skey = b''
         self._cipher = None
         self.logger = None

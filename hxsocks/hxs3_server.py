@@ -69,7 +69,7 @@ class hxs3_server:
 class hxs3_handler(HxsCommon):
 
     def __init__(self, server):
-        super().__init__()
+        super().__init__(0)
         self.logger = server.logger
         self.user_mgr = server.user_mgr
         self.server_addr = server.address

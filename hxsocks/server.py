@@ -30,7 +30,7 @@ import hashlib
 import asyncio
 import asyncio.streams
 
-from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor
+from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, method_supported
 from hxsocks.hxs2_conn import Hxs2Connection
 from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CLIENT_WRITE_BUFFER, REMOTE_WRITE_BUFFER
 from hxsocks.hxs4_handler import HXsocks4Handler
@@ -259,6 +259,8 @@ class HXsocksHandler:
             mode_s = 0
             if mode & 1:
                 mode_s |= 1
+            if mode & 2 and 'rc4' in method_supported:
+                mode_s |= 2
 
             reply = reply + bytes((mode_s, )) + \
                 bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))

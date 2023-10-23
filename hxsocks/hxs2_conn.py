@@ -20,17 +20,28 @@
 
 import asyncio
 import struct
+import hashlib
 
 from hxcrypto import InvalidTag
+from hxcrypto.encrypt import EncryptorStream
 from hxsocks.hxs_common_server import HxsCommon, ReadFrameError, CLIENT_WRITE_BUFFER, READ_FRAME_TIMEOUT
 
 
 class Hxs2Connection(HxsCommon):
 
     def __init__(self, reader, writer, user, skey, mode, proxy, user_mgr, server_addr, logger, settings):
-        super().__init__()
+        super().__init__(mode)
         self._skey = skey
-        self._mode = mode
+        self.encrypt_flen = self._mode & 2
+        self._flen_cipher = None
+        if self.encrypt_flen:
+            md5 = hashlib.md5()
+            md5.update(self._skey)
+            md5.update(b'encrypt_flen')
+            key = md5.digest()
+            self._flen_cipher = EncryptorStream(key, 'rc4', check_iv=False)
+            self._flen_cipher.encrypt(bytes(1024))
+            self._flen_cipher.decrypt(bytes(1024))
         self._client_reader = reader
         self._client_writer = writer
         self.client_address = writer.get_extra_info('peername')
@@ -54,6 +65,8 @@ class Hxs2Connection(HxsCommon):
     async def read_frame(self, timeout=30):
         try:
             frame_len = await self._rfile_read(2, timeout)
+            if self.encrypt_flen:
+                frame_len = self._flen_cipher.decrypt(frame_len)
             frame_len, = struct.unpack('>H', frame_len)
         except (ConnectionError, asyncio.IncompleteReadError) as err:
             # destroy connection
@@ -68,7 +81,10 @@ class Hxs2Connection(HxsCommon):
             raise ReadFrameError(err) from err
 
     async def _send_frame(self, ct_):
-        self._client_writer.write(struct.pack('>H', len(ct_)) + ct_)
+        frame_len = struct.pack('>H', len(ct_))
+        if self.encrypt_flen:
+            frame_len = self._flen_cipher.encrypt(frame_len)
+        self._client_writer.write(frame_len + ct_)
         try:
             await self._client_writer.drain()
         except ConnectionError as err:
