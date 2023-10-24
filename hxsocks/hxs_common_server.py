@@ -68,31 +68,14 @@ class ForwardContext:
         self.traffic_from_client = 0
         self.traffic_from_remote = 0
 
-        self._sent_counter = 0
-        self._sent_rate = 0
-        # start monitor
-        self.monitor_task = asyncio.ensure_future(self.monitor())
-
     def data_sent(self, data_len):
         # sending data to hxs connection
         self.traffic_from_remote += data_len
         self.last_active = time.monotonic()
-        self._sent_counter += data_len // 8192 + 1
 
     def data_recv(self, data_len):
         self.traffic_from_client += data_len
         self.last_active = time.monotonic()
-
-    def is_heavy(self):
-        return self._sent_counter and self._sent_rate > 10
-
-    async def monitor(self):
-        while self.stream_status is OPEN:
-            await asyncio.sleep(1)
-            self._sent_rate = 0.2 * self._sent_counter + self._sent_rate * 0.8
-            if self._sent_counter or self._sent_rate > 5:
-                self.logger.debug('%20s rate: %.2f, count %s', self.host, self._sent_rate, self._sent_counter)
-            self._sent_counter = 0
 
 
 class ReadFrameError(Exception):
@@ -340,6 +323,10 @@ class HxsCommon:
         if not payload:
             payload = bytes(random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE))
 
+        if type_ in (DATA, ):
+            await asyncio.sleep(0)
+            if self._stream_context[stream_id].stream_status & EOF_SENT:
+                return
         header = struct.pack('>BBH', type_, flags, stream_id)
         data = header + payload
         ct_ = self._cipher.encrypt(data)
@@ -374,7 +361,6 @@ class HxsCommon:
             while data_:
                 await self.send_one_data_frame(stream_id, data_)
                 data_ = data.read(random.randint(64, self.FRAME_SIZE_LIMIT))
-                await asyncio.sleep(0)
         else:
             await self.send_one_data_frame(stream_id, data, more_padding)
 
@@ -420,8 +406,6 @@ class HxsCommon:
                 break
             if self._stream_context[stream_id].stream_status & EOF_SENT:
                 break
-            if self._stream_context[stream_id].is_heavy():
-                await asyncio.sleep(0)
             if count < 3:
                 await self.send_data_frame(stream_id, data, more_padding=True)
                 count += 1
