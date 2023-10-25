@@ -235,6 +235,7 @@ class HxsCommon:
                     else:
                         self.logger.error('frame_type == HEADERS, stream_id %s, flags: %s', stream_id, frame_flags)
                 elif frame_type == RST_STREAM:  # 3
+                    self._stream_context[stream_id].stream_status = CLOSED
                     asyncio.ensure_future(self.close_stream(stream_id))
                 elif frame_type == SETTINGS:
                     if stream_id == 1:
@@ -399,10 +400,12 @@ class HxsCommon:
                 break
 
             if not data:
-                await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id)
-                self._stream_context[stream_id].stream_status |= EOF_SENT
+                if not self._stream_context[stream_id].stream_status & EOF_SENT:
+                    await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id)
+                    self._stream_context[stream_id].stream_status |= EOF_SENT
                 if self._stream_context[stream_id].stream_status == CLOSED:
                     await self.close_stream(stream_id)
+                    return
                 break
             if self._stream_context[stream_id].stream_status & EOF_SENT:
                 break
