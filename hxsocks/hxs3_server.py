@@ -43,16 +43,19 @@ class hxs3_server:
 
     def start_service(self):
         self.logger.warning('starting hxs3 server at %r', self.address)
-        asyncio.ensure_future(websockets.server.serve(self.handle,
-                                                      host=self.address[0],
-                                                      port=self.address[1],
-                                                      ping_interval=None,
-                                                      ping_timeout=None,
-                                                      max_size=2 ** 17,
-                                                      max_queue=2,
-                                                      read_limit=2 ** 18,
-                                                      write_limit=CLIENT_WRITE_BUFFER,
-                                                      ))
+        asyncio.ensure_future(self._start())
+
+    async def _start(self):
+        self.server = await websockets.server.serve(self.handle,
+                                                    host=self.address[0],
+                                                    port=self.address[1],
+                                                    ping_interval=None,
+                                                    ping_timeout=None,
+                                                    max_size=2 ** 17,
+                                                    max_queue=2,
+                                                    read_limit=2 ** 18,
+                                                    write_limit=CLIENT_WRITE_BUFFER,
+                                                    )
 
     async def handle(self, websocket, path):
         handler = self.handller_class(self)
@@ -64,6 +67,10 @@ class hxs3_server:
             await handler.websocket.close()
         except ConnectionClosed:
             pass
+
+    async def stop(self):
+        self.server.close()
+        await self.server.wait_closed()
 
 
 class hxs3_handler(HxsCommon):

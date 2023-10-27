@@ -97,8 +97,6 @@ class HxsServer:
         hdr.setFormatter(formatter)
         self.logger.addHandler(hdr)
 
-        self.logger.warning('starting server: %s', serverinfo)
-
     async def handle(self, reader, writer):
         _handler = self._handler_class(self)
         await _handler.handle(reader, writer)
@@ -107,10 +105,15 @@ class HxsServer:
         asyncio.ensure_future(self._start())
 
     async def _start(self):
+        self.logger.warning('starting server: %s', self.address)
         self.server = await asyncio.start_server(self.handle,
                                                  self.address[0],
                                                  self.address[1],
                                                  limit=131072)
+
+    async def stop(self):
+        self.server.close()
+        await self.server.wait_closed()
 
 
 class HXsocksHandler:
