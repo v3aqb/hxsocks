@@ -64,18 +64,35 @@ class ForwardContext:
 
         # eof recieved
         self.stream_status = OPEN
-        # traffic
+        # traffic, for log
         self.traffic_from_client = 0
         self.traffic_from_remote = 0
+        # traffic, for flow control
+        self.sent_rate = 0
+        self._sent_counter = 0
+        self.recv_rate = 0
+        self._recv_counter = 0
+
+        self.monitor_task = asyncio.ensure_future(self.monitor())
 
     def data_sent(self, data_len):
         # sending data to hxs connection
         self.traffic_from_remote += data_len
+        self._sent_counter += data_len
         self.last_active = time.monotonic()
 
     def data_recv(self, data_len):
         self.traffic_from_client += data_len
+        self._recv_counter += data_len
         self.last_active = time.monotonic()
+
+    async def monitor(self):
+        while self.stream_status is OPEN:
+            await asyncio.sleep(1)
+            self.sent_rate = 0.2 * self._sent_counter + self.sent_rate * 0.8
+            self._sent_counter = 0
+            self.recv_rate = 0.2 * self._recv_counter + self.recv_rate * 0.8
+            self._recv_counter = 0
 
 
 class ReadFrameError(Exception):
@@ -113,6 +130,11 @@ class HxsCommon:
 
         self._init_time = time.monotonic()
         self._last_active = self._init_time
+        self.sent_rate = 0
+        self._sent_counter = 0
+        self.recv_rate = 0
+        self._recv_counter = 0
+
         self._gone = False
         self._next_stream_id = 1
         self._connection_lost = False
@@ -120,6 +142,7 @@ class HxsCommon:
         self._stream_writer = {}
         self._stream_task = {}
         self._stream_context = {}
+        self.monitor_task = None
 
     def decrypt_frame(self, frame_data):
         if self._cipher:
@@ -150,6 +173,7 @@ class HxsCommon:
     async def handle_connection(self):
         self.logger.debug('start recieving frames...')
         HxsUDPRelayManager.config(self.settings)
+        self.monitor_task = asyncio.ensure_future(self.monitor())
 
         self.udp_uid = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
@@ -496,3 +520,11 @@ class HxsCommon:
 
     async def read_frame(self, timeout):
         raise NotImplementedError
+
+    async def monitor(self):
+        while not self._connection_lost:
+            await asyncio.sleep(1)
+            self.sent_rate = 0.2 * self._sent_counter + self.sent_rate * 0.8
+            self._sent_counter = 0
+            self.recv_rate = 0.2 * self._recv_counter + self.recv_rate * 0.8
+            self._recv_counter = 0
