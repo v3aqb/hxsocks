@@ -18,9 +18,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import os
 import socket
-import struct
 import io
 import random
 import hashlib
@@ -144,16 +142,12 @@ class HXsocks4Handler:
 
     async def play_dead(self):
         count = random.randint(12, 30)
-        sent = False
         for _ in range(count):
             timeout = random.random()
             fut = self.client_reader.read(self.bufsize)
             try:
                 await asyncio.wait_for(fut, timeout)
             except asyncio.TimeoutError:
-                if sent:
-                    return
+                continue
             except OSError:
                 return
-            self.client_writer.write(os.urandom(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE)))
-            sent = True
