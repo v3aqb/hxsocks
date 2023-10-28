@@ -314,21 +314,21 @@ class HxsCommon:
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
-    async def send_frame(self, type_, flags, stream_id, payload=None):
-        self.logger.debug('send frame_type: %d, stream_id: %d', type_, stream_id)
+    async def send_frame(self, frame_type, flags, stream_id, payload=None):
+        self.logger.info('send frame_type: %d, stream_id: %d', frame_type, stream_id)
         if self._connection_lost:
             self.logger.debug('send_frame, connection lost')
             return
-        if type_ in (DATA, HEADERS, UDP_DGRAM2):
+        if frame_type in (DATA, HEADERS, UDP_DGRAM2):
             self._last_active = time.monotonic()
         if not payload:
             payload = bytes(random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE))
 
-        if type_ in (DATA, ):
+        if frame_type in (DATA, ):
             await asyncio.sleep(0)
             if self._stream_context[stream_id].stream_status & EOF_SENT:
                 return
-        header = struct.pack('>BBH', type_, flags, stream_id)
+        header = struct.pack('>BBH', frame_type, flags, stream_id)
         data = header + payload
         ct_ = self._cipher.encrypt(data)
 
