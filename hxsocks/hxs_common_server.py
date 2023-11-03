@@ -316,13 +316,22 @@ class HxsCommon:
             reader, writer = await open_connection(host, port, self._proxy,
                                                    self.settings)
             writer.transport.set_write_buffer_limits(REMOTE_WRITE_BUFFER)
-        except (OSError, asyncio.TimeoutError, socket.gaierror) as err:
+        except (OSError, asyncio.TimeoutError, socket.gaierror, ValueError) as err:
             # tell client request failed.
             self.logger.error('connect %s:%s failed: %r, proxy %r', host, port, err, self._proxy)
             data = b'\x01' * random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE)
             await self.send_frame(RST_STREAM, 0, stream_id, data)
         else:
             # tell client request success, header frame, first byte is \x00
+            try:
+                addr = writer.get_extra_info('peername')
+                self.user_mgr.user_access_ctrl(self.server_addr[1], addr, self.client_address, self.user, 0)
+            except ValueError as err:
+                self.logger.error('connect %s:%s failed: %r, proxy %r', host, port, err, self._proxy)
+                data = b'\x01' * random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE)
+                await self.send_frame(RST_STREAM, 0, stream_id, data)
+                writer.close()
+                await writer.wait_closed()
             timelog = time.monotonic() - timelog
             if timelog > 1:
                 self.logger.warning('connect %s:%s connected, %.3fs', host, port, timelog)

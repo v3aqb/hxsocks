@@ -1,5 +1,4 @@
 
-import sys
 import time
 import struct
 import hashlib
@@ -34,7 +33,7 @@ class porn_filter:
                 self.logger.error('%r', err, exc_info=True)
         self.loaded = True
 
-    def is_porn(self, addr):
+    def is_blocked(self, addr):
         if not self.loaded and time.time() - self.last_load > 3600:
             self.last_load = time.time()
             try:
@@ -45,16 +44,60 @@ class porn_filter:
             return self.porn_filter.match(addr)
 
 
+class china_filter:
+    def __init__(self, settings):
+        self.logger = logging.getLogger('china_filter')
+        self.logger.setLevel(settings.log_level)
+        hdr = logging.StreamHandler()
+        formatter = logging.Formatter('%(asctime)s %(name)s:%(levelname)s %(message)s')
+        hdr.setFormatter(formatter)
+        self.logger.addHandler(hdr)
+
+        self.china_filter = None
+        self.last_load = 0
+        self.loaded = False
+
+    def load(self):
+        self.china_filter = ap_filter()
+        hosts = urlopen('https://github.com/QiuSimons/Chnroute/raw/master/dist/chnroute/chinalist.txt').readlines()
+        for line in hosts:
+            try:
+                self.china_filter.add('||' + line.decode().strip())
+            except Exception as err:
+                self.logger.error('%r', err, exc_info=True)
+        hosts = urlopen('https://github.com/QiuSimons/Chnroute/raw/master/dist/chnroute/chnroute.txt').readlines()
+        for line in hosts:
+            if line.strip() and '#' not in line.decode():
+                self.china_filter.add(line.decode().strip())
+        hosts = urlopen('https://github.com/QiuSimons/Chnroute/raw/master/dist/chnroute/chnroute-v6.txt').readlines()
+        for line in hosts:
+            if line.strip() and '#' not in line.decode():
+                self.china_filter.add(line.decode().strip())
+
+        self.loaded = True
+
+    def is_blocked(self, addr):
+        if not self.loaded and time.time() - self.last_load > 3600:
+            self.last_load = time.time()
+            try:
+                self.load()
+            except Exception as err:
+                self.logger.error('load china_filter failed.', exc_info=True)
+        if self.loaded:
+            return self.china_filter.match(addr)
+
+
 class UserManager:
     def __init__(self, server_cert, settings):
         '''server_cert: path to server_cert'''
         self.server_cert = ECC(from_file=server_cert)
-        self._limit = settings.conn_limit
+        self.settings = settings
         self.user_pass = {}
         self.user_tag = {}
         self.userpkeys = defaultdict(deque)  # user name: client key
         self.pkeyuser = {}  # user pubkey: user name
         self.porn_filter = porn_filter(settings)
+        self.china_filter = china_filter(settings)
         self.quick_auth_data = {}
 
     def add_user(self, user, password):
@@ -104,7 +147,7 @@ class UserManager:
         # return public_key, username, password
         if hashlib.md5(client_pkey).digest() in self.pkeyuser:
             raise ValueError('public key already registered. user: %s' % user)
-        if len(self.userpkeys[user]) > self._limit:
+        if len(self.userpkeys[user]) > self.settings.conn_limit:
             raise ValueError('connection limit exceeded. user: %s' % user)
         for key_len in (32, 24, 16):
             try:
@@ -145,8 +188,11 @@ class UserManager:
         # raise ValueError if denied
         if user not in self.user_tag:
             return
+        if self.settings.block_china:
+            if self.china_filter.is_blocked(address[0]):
+                raise ValueError('china block')
         if 'noporn' in self.user_tag[user]:
-            if self.porn_filter.is_porn(address[0]):
+            if self.porn_filter.is_blocked(address[0]):
                 raise ValueError('porn block')
 
     def user_access_log(self, server_port, address, traffic, client_ip, user, cmd):

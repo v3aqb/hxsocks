@@ -63,6 +63,7 @@ configure file example
         user: password
         user2: password2
     conn_limit: 20         # connection limit per user
+    block_china: false
     prefer_ipv4: false
     tcp_nodelay: false
     tcp_timeout: 600

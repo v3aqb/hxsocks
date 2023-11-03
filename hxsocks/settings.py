@@ -6,6 +6,7 @@ import logging
 class Settings:
     conn_limit = 20
     log_level = 20
+    block_china = False
 
     tcp_nodelay = False
     tcp_idle_timeout = 600
@@ -24,6 +25,7 @@ class Settings:
             cfg = yaml.safe_load(ymlfile)
 
         cls.conn_limit = cfg.get('conn_limit', cls.conn_limit)
+        cls.block_china = cfg.get('block_china', cls.block_china)
         cls.prefer_ipv4 = cfg.get('prefer_ipv4', cls.prefer_ipv4)
         log_level = cfg.get('log_level', cls.log_level)
         cls.log_level = log_level
