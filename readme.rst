@@ -3,6 +3,8 @@ hxsocks
 
 A better encrypted socks proxy.
 
+2023.10.24: update hxsocks4 protocol, remove some signature
+
 2022.09.26: support shadowsocks 2022-blake3 encryption method (tcp only)
 
 2022.06.22: introduce new authentication method
