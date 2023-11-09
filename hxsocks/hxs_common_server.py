@@ -24,13 +24,17 @@ CLIENT_WRITE_BUFFER = 131072
 REMOTE_WRITE_BUFFER = 131072
 READ_AUTH_TIMEOUT = 12
 READ_FRAME_TIMEOUT = 8
-_PING_SIZE = 128
+_PING_INTV = 3
+_PING_INTV_2 = 20
+_PING_SIZE = 256
 _PONG_SIZE = 256
 _PONG_FREQ = 0.3
 _FRAME_SIZE_LIMIT = 16386
 _FRAME_SPLIT_FREQ = 0.3
 _STREAM_TIMEOUT = 60
 _SPEED_LIMIT = 1048576 * 5
+RECV_WINDOW_SIZE = 2 ** 31 - 1
+_WINDOW_SIZE = (4096, 65536, 1048576 * 4)
 
 DATA = 0
 HEADERS = 1
@@ -46,6 +50,7 @@ UDP_DGRAM2 = 21
 
 PONG = 1
 END_STREAM_FLAG = 1
+FLOW_CONTROL = 128
 
 HXS2_METHOD = [
     'chacha20-ietf-poly1305',
@@ -55,9 +60,8 @@ HXS2_METHOD = [
 
 
 class ForwardContext:
-    def __init__(self, host, logger):
+    def __init__(self, conn, stream_id, host, send_w, recv_w):
         self.host = host  # (host, port)
-        self.logger = logger
         self.drain_lock = asyncio.Lock()
         self.last_active = time.monotonic()
         self.resume_reading = asyncio.Event()
@@ -70,30 +74,119 @@ class ForwardContext:
         self.traffic_from_remote = 0
         # traffic, for flow control
         self.sent_rate = 0
-        self._sent_counter = 0
+        self.sent_rate_max = 0
+        self.sent_counter = 0
         self.recv_rate = 0
-        self._recv_counter = 0
+        self.recv_rate_max = 0
+        self.recv_counter = 0
 
-        self.monitor_task = asyncio.ensure_future(self.monitor())
+        self._monitor_task = None
 
-    def data_sent(self, data_len):
-        # sending data to hxs connection
-        self.traffic_from_remote += data_len
-        self._sent_counter += data_len
+        self._conn = conn
+        self._stream_id = stream_id
+        self.fc_enable = bool(send_w)
+        if send_w or stream_id == 0:
+            self._monitor_task = asyncio.ensure_future(self.monitor())
+        self.send_w = send_w
+        self._lock = asyncio.Lock()
+        self._window_open = asyncio.Event()
+        self._window_open.set()
+        self.recv_w = recv_w
+        self._recv_w_max = recv_w
+        self._recv_w_min = recv_w
+        self._recv_w_counter = 0
+
+    async def acquire(self, size):
+        async with self._lock:
+            await self._window_open.wait()
+            self.traffic_from_client += size
+            self.sent_counter += size
+            self.last_active = time.monotonic()
+            if self.fc_enable:
+                self.send_w -= size
+                if self.send_w <= 0:
+                    self._window_open.clear()
+
+    def data_recv(self, size):
+        self.traffic_from_remote += size
+        self.recv_counter += size
         self.last_active = time.monotonic()
+        if self.fc_enable:
+            self._recv_w_counter += size
+            # update window later
+            if self._recv_w_counter > self.recv_w // 2:
+                w_counter = self._recv_w_counter
+                self._recv_w_counter = 0
+                payload = struct.pack('>I', w_counter)
+                payload += bytes(random.randint(self._conn.HEADER_SIZE // 4 - 4, self._conn.HEADER_SIZE - 4))
+                asyncio.ensure_future(self._conn.send_frame(WINDOW_UPDATE, 0, self._stream_id, payload))
 
-    def data_recv(self, data_len):
-        self.traffic_from_client += data_len
-        self._recv_counter += data_len
-        self.last_active = time.monotonic()
+    def enable_fc(self, send_w, recv_w):
+        self.fc_enable = bool(send_w)
+        self.send_w = send_w
+        self.recv_w = recv_w
+        self._recv_w_max = recv_w
+        self._recv_w_min = recv_w
+        if not self._monitor_task:
+            self._monitor_task = asyncio.ensure_future(self.monitor())
+
+    def new_recv_window(self, new_window):
+        # change recv window
+        new_window = int(new_window)
+        if new_window < self._conn.WINDOW_SIZE[0]:
+            self._conn.logger.info('new_window: %d', new_window)
+            new_window = self._conn.WINDOW_SIZE[0]
+        if new_window > self._conn.WINDOW_SIZE[2]:
+            self._conn.logger.info('new_window: %d', new_window)
+            new_window = self._conn.WINDOW_SIZE[2]
+        old_size = self.recv_w
+        self.recv_w = new_window
+        self._recv_w_counter += new_window - old_size
+        if self._recv_w_counter > self.recv_w // 2:
+            w_counter = self._recv_w_counter
+            self._recv_w_counter = 0
+            payload = struct.pack('>I', w_counter)
+            payload += bytes(random.randint(self._conn.HEADER_SIZE // 4 - 4, self._conn.HEADER_SIZE - 4))
+            asyncio.ensure_future(self._conn.send_frame(WINDOW_UPDATE, 0, self._stream_id, payload))
+        self._conn.logger.debug(f'{self._conn.name}: update window form {old_size} to {self.recv_w}')
+
+    def reduce_window(self, rtt):
+        if self.fc_enable:
+            if self.recv_rate < self._conn.WINDOW_SIZE[1]:
+                return
+            self._recv_w_max = self.recv_w
+            new_window = self.recv_rate * rtt * 0.75
+            new_window = max(new_window, self.recv_w * 0.75)
+            self.new_recv_window(new_window)
+
+    def increase_window(self, rtt):
+        if self.fc_enable:
+            if self.recv_rate < self._conn.WINDOW_SIZE[1]:
+                return
+            self._recv_w_min = self.recv_w
+            if self._recv_w_max > self.recv_w:
+                new_window = (self.recv_w + self._recv_w_max) // 2
+                new_window = max(new_window, self.recv_w + self._conn.WINDOW_SIZE[0])
+                self.new_recv_window(new_window)
+            elif self.recv_rate * rtt * 2.7 > self.recv_w:
+                new_window = self.recv_rate * rtt * 2.7
+                new_window = min(new_window, self.recv_w * 1.25)
+                self.new_recv_window(new_window)
+
+    def window_update(self, size):
+        self.send_w += size
+        if self.send_w > 0:
+            self._window_open.set()
 
     async def monitor(self):
         while self.stream_status is OPEN:
             await asyncio.sleep(1)
-            self.sent_rate = 0.2 * self._sent_counter + self.sent_rate * 0.8
-            self._sent_counter = 0
-            self.recv_rate = 0.2 * self._recv_counter + self.recv_rate * 0.8
-            self._recv_counter = 0
+            self.sent_rate_max = max(self.sent_rate_max, self.sent_counter)
+            self.sent_rate = 0.2 * self.sent_counter + self.sent_rate * 0.8
+            self.sent_counter = 0
+            self.recv_rate_max = max(self.recv_rate_max, self.recv_counter)
+            self.recv_rate = 0.2 * self.recv_counter + self.recv_rate * 0.8
+            self.recv_counter = 0
 
 
 class ReadFrameError(Exception):
@@ -105,6 +198,8 @@ class ReadFrameError(Exception):
 class HxsCommon:
     bufsize = 65535 - 22
     HEADER_SIZE = _HEADER_SIZE
+    PING_INTV = _PING_INTV
+    PING_INTV_2 = _PING_INTV_2
     PING_SIZE = _PING_SIZE
     PONG_SIZE = _PONG_SIZE
     PONG_FREQ = _PONG_FREQ
@@ -112,6 +207,7 @@ class HxsCommon:
     FRAME_SPLIT_FREQ = _FRAME_SPLIT_FREQ
     STREAM_TIMEOUT = _STREAM_TIMEOUT
     SPEED_LIMIT = _SPEED_LIMIT
+    WINDOW_SIZE = _WINDOW_SIZE
 
     def __init__(self, mode):
         self._mode = mode
@@ -126,16 +222,17 @@ class HxsCommon:
         self.user_mgr = None
         self.server_addr = None
         self.client_address = None
+        self.name = None
         self.user = ''
         self.udp_uid = ''
         self.client_id = ''
 
         self._init_time = time.monotonic()
         self._last_active = self._init_time
-        self.sent_rate = 0
-        self._sent_counter = 0
-        self.recv_rate = 0
-        self._recv_counter = 0
+        self._ping_id = 0
+        self._ping_time = 0
+        self._rtt = 5
+        self._rtt_ewma = 0.2
 
         self._gone = False
         self._next_stream_id = 1
@@ -143,7 +240,7 @@ class HxsCommon:
 
         self._stream_writer = {}
         self._stream_task = {}
-        self._stream_context = {}
+        self._stream_ctx = {}
         self.monitor_task = None
 
     def decrypt_frame(self, frame_data):
@@ -176,6 +273,7 @@ class HxsCommon:
         self.logger.debug('start recieving frames...')
         HxsUDPRelayManager.config(self.settings)
         self.monitor_task = asyncio.ensure_future(self.monitor())
+        self._stream_ctx[0] = ForwardContext(self, 0, ('', 0), 0, 0)
 
         self.udp_uid = '%s:%s' % (self.client_address[0], self.user)
         while not self._connection_lost:
@@ -204,9 +302,9 @@ class HxsCommon:
                 # +------+-------------------+----------+
                 # |  1   |   1   |     2     | Variable |
                 # +------+-------------------+----------+
-                frame_data = io.BytesIO(frame_data)
-                header = frame_data.read(4)
+                header, payload = frame_data[:4], frame_data[4:]
                 frame_type, frame_flags, stream_id = struct.unpack('>BBH', header)
+                payload = io.BytesIO(payload)
 
                 if frame_type in (DATA, HEADERS, RST_STREAM, UDP_DGRAM2):
                     self._last_active = time.monotonic()
@@ -216,12 +314,14 @@ class HxsCommon:
                 self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
                 if frame_type == DATA:  # 0
                     # check if remote socket writable
-                    if self._stream_context[stream_id].stream_status & EOF_RECV:
+                    # first 2 bytes of payload indicates data_len
+                    data_len, = struct.unpack('>H', payload.read(2))
+                    data = payload.read(data_len)
+                    self._stream_ctx[0].data_recv(len(data))
+                    self._stream_ctx[stream_id].data_recv(len(data))
+                    if self._stream_ctx[stream_id].stream_status & EOF_RECV:
                         self.logger.warning('data recv while stream closed. sid %d', stream_id)
                         continue
-                    # first 2 bytes of payload indicates data_len
-                    data_len, = struct.unpack('>H', frame_data.read(2))
-                    data = frame_data.read(data_len)
                     if len(data) != data_len:
                         # something went wrong, destory connection
                         self.logger.error('data_len mismatch')
@@ -230,7 +330,6 @@ class HxsCommon:
                     try:
                         self._stream_writer[stream_id].write(data)
                         await self.stream_writer_drain(stream_id)
-                        self._stream_context[stream_id].data_recv(len(data))
                     except ConnectionError:
                         # remote closed, reset stream
                         asyncio.ensure_future(self.close_stream(stream_id))
@@ -239,49 +338,78 @@ class HxsCommon:
                         # open new stream
                         self._next_stream_id += 1
 
-                        host_len = frame_data.read(1)[0]
-                        host = frame_data.read(host_len).decode('ascii')
-                        port, = struct.unpack('>H', frame_data.read(2))
+                        host_len = payload.read(1)[0]
+                        host = payload.read(host_len).decode('ascii')
+                        port = struct.unpack('>H', payload.read(2))[0]
                         # rest of the payload is discarded
-                        asyncio.ensure_future(self.create_connection(stream_id, host, port))
+                        send_w = 0
+                        if frame_flags & FLOW_CONTROL and \
+                                self._stream_ctx[0].fc_enable and \
+                                not self._settings_async_drain:
+                            send_w = struct.unpack('>I', payload.read(4))[0]
+                        asyncio.ensure_future(self.create_connection(stream_id, host, port, send_w))
 
                     elif stream_id in self._stream_writer:
                         self.logger.debug('sid %s END_STREAM. status %s',
                                           stream_id,
-                                          self._stream_context[stream_id].stream_status)
+                                          self._stream_ctx[stream_id].stream_status)
                         if frame_flags & END_STREAM_FLAG:
-                            self._stream_context[stream_id].stream_status |= EOF_RECV
+                            self._stream_ctx[stream_id].stream_status |= EOF_RECV
                             if stream_id in self._stream_writer:
                                 try:
                                     self._stream_writer[stream_id].write_eof()
                                 except OSError:
-                                    self._stream_context[stream_id].stream_status = CLOSED
-                            if self._stream_context[stream_id].stream_status == CLOSED:
+                                    self._stream_ctx[stream_id].stream_status = CLOSED
+                            if self._stream_ctx[stream_id].stream_status == CLOSED:
                                 asyncio.ensure_future(self.close_stream(stream_id))
                     else:
                         self.logger.error('frame_type == HEADERS, stream_id %s, flags: %s', stream_id, frame_flags)
                 elif frame_type == RST_STREAM:  # 3
-                    self._stream_context[stream_id].stream_status = CLOSED
+                    self._stream_ctx[stream_id].stream_status = CLOSED
                     asyncio.ensure_future(self.close_stream(stream_id))
                 elif frame_type == SETTINGS:
-                    if stream_id == 1:
+                    settings = 0
+                    payload_ = b''
+                    if stream_id & 1:
                         self._settings_async_drain = True
-                        await self.send_frame(SETTINGS, 0, 1)
+                        settings |= 1
+                    if stream_id & FLOW_CONTROL and self._next_stream_id == 1:
+                        send_w = struct.unpack('>I', payload.read(4))[0]
+                        if 4096 <= send_w <= 2 ** 31 - 1:
+                            self._stream_ctx[0].enable_fc(send_w, self.WINDOW_SIZE[1])
+                            payload_ += struct.pack('>I', self.WINDOW_SIZE[1])
+                            settings |= FLOW_CONTROL
+                    payload_ += bytes(random.randint(self.HEADER_SIZE // 4 - len(payload_),
+                                                     self.HEADER_SIZE - len(payload_)))
+                    await self.send_frame(SETTINGS, 1, settings, payload_)
                 elif frame_type == PING:  # 6
                     if frame_flags == 0:
-                        await self.send_pong(stream_id=stream_id)
+                        await self.send_pong(stream_id)
+                    elif self._ping_time and self._ping_id == stream_id:
+                        resp_time = time.monotonic() - self._ping_time
+                        self._rtt_ewma = resp_time * 0.2 + self._rtt_ewma * 0.8
+                        self._rtt = min(self._rtt, resp_time)
+                        self._ping_time = 0
+                        if max(resp_time, self._rtt_ewma) < self._rtt * 1.2:
+                            self._stream_ctx[0].increase_window(self._rtt)
+                        if resp_time > self._rtt * 2:
+                            self._stream_ctx[0].reduce_window(self._rtt)
                 elif frame_type == GOAWAY:  # 7
                     # GOAWAY
                     # no more new stream
                     # make no sense when client sending this...
                     self._gone = True
                 elif frame_type == WINDOW_UPDATE:  # 8
-                    if frame_flags == 1:
-                        self._stream_context[stream_id].resume_reading.clear()
+                    if self._settings_async_drain and stream_id:
+                        if frame_flags == 1:
+                            self._stream_ctx[stream_id].resume_reading.clear()
+                        else:
+                            self._stream_ctx[stream_id].resume_reading.set()
                     else:
-                        self._stream_context[stream_id].resume_reading.set()
+                        size = struct.unpack('>I', payload.read(4))[0]
+                        self._stream_ctx[stream_id].window_update(size)
                 elif frame_type == UDP_DGRAM2:  # 21
-                    client_id, udp_sid, data = parse_dgram2(frame_data)
+                    client_id, udp_sid, data = parse_dgram2(payload)
                     if not self.client_id:
                         self.client_id = client_id
                     await HxsUDPRelayManager.send_dgram(udp_sid, data, self)
@@ -295,7 +423,7 @@ class HxsCommon:
         HxsUDPRelayManager.conn_lost(self)
         task_list = []
         for stream_id in self._stream_writer:
-            self._stream_context[stream_id].stream_status = CLOSED
+            self._stream_ctx[stream_id].stream_status = CLOSED
             if not self._stream_writer[stream_id].is_closing():
                 self._stream_writer[stream_id].close()
                 if stream_id in self._stream_writer:
@@ -307,10 +435,13 @@ class HxsCommon:
             await asyncio.wait(task_list)
         return self._next_stream_id == 1
 
-    async def create_connection(self, stream_id, host, port):
+    async def create_connection(self, stream_id, host, port, send_w=0):
         self.logger.info('connecting %s:%s %s %s', host, port, self.user, self.client_address)
         timelog = time.monotonic()
-        self._stream_context[stream_id] = ForwardContext(host, self.logger)
+        send_w = 0  # DISABLE PER_STREAM FLOW CONTROL
+        recv_w = RECV_WINDOW_SIZE if send_w else 0
+        self._stream_ctx[stream_id] = ForwardContext(self, stream_id, (host, port), send_w, recv_w)
+        self.name = self.server_addr[1]
         try:
             self.user_mgr.user_access_ctrl(self.server_addr[1], (host, port), self.client_address, self.user, 0)
             reader, writer = await open_connection(host, port, self._proxy,
@@ -337,7 +468,7 @@ class HxsCommon:
                 self.logger.warning('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
-            if self._stream_context[stream_id].stream_status == CLOSED:
+            if self._stream_ctx[stream_id].stream_status == CLOSED:
                 self.logger.warning('connect %s:%s connected, client closed', host, port)
                 writer.close()
                 await writer.wait_closed()
@@ -345,12 +476,19 @@ class HxsCommon:
             # registor stream
             self._stream_writer[stream_id] = writer
             # start forward from remote_reader to client_writer
-            await self.send_frame(HEADERS, OPEN, stream_id)
+            flag = OPEN
+            payload = b''
+            if recv_w:
+                flag |= FLOW_CONTROL
+                payload += struct.pack('>I', recv_w)
+            payload += bytes(random.randint(self.HEADER_SIZE // 4 - len(payload),
+                                            self.HEADER_SIZE - len(payload)))
+            await self.send_frame(HEADERS, flag, stream_id, payload)
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
     async def send_frame(self, frame_type, flags, stream_id, payload=None):
-        self.logger.info('send frame_type: %d, stream_id: %d', frame_type, stream_id)
+        self.logger.debug('send frame_type: %d, stream_id: %d', frame_type, stream_id)
         if self._connection_lost:
             self.logger.debug('send_frame, connection lost')
             return
@@ -359,19 +497,19 @@ class HxsCommon:
         if not payload:
             payload = bytes(random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE))
 
-        if frame_type in (DATA, ):
-            await asyncio.sleep(0)
-            if self._stream_context[stream_id].stream_status & EOF_SENT:
-                return
         header = struct.pack('>BBH', frame_type, flags, stream_id)
         data = header + payload
         ct_ = self._cipher.encrypt(data)
 
         await self._send_frame(ct_)
-        if frame_type is DATA:
+        if frame_type is DATA and not self._stream_ctx[0].fc_enable:
             await asyncio.sleep(len(payload) / self.SPEED_LIMIT)
 
     async def send_one_data_frame(self, stream_id, data, more_padding=False):
+        if self._stream_ctx[stream_id].stream_status & EOF_SENT:
+            return
+        await self._stream_ctx[stream_id].acquire(len(data))
+        await self._stream_ctx[0].acquire(len(data))
         payload = struct.pack('>H', len(data)) + data
         diff = self.FRAME_SIZE_LIMIT - len(data)
         if 0 <= diff < self.FRAME_SIZE_LIMIT * 0.05:
@@ -389,10 +527,6 @@ class HxsCommon:
         await self.send_frame(DATA, 0, stream_id, payload)
 
     async def send_data_frame(self, stream_id, data, more_padding=False):
-        self._stream_context[stream_id].data_sent(len(data))
-        if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
-            await self.send_one_data_frame(stream_id, data)
-            return
         if len(data) > self.FRAME_SIZE_LIMIT and random.random() < self.FRAME_SPLIT_FREQ:
             data = io.BytesIO(data)
             data_ = data.read(random.randint(64, self.FRAME_SIZE_LIMIT))
@@ -407,10 +541,14 @@ class HxsCommon:
             size = self.PONG_SIZE
         await self.send_frame(PING, PONG, stream_id, bytes(random.randint(size // 4, size)))
 
-    async def send_ping(self, stream_id=0, size=None):
+    async def send_ping(self, size=None):
+        if self._ping_time:
+            return
         if not size:
             size = self.PING_SIZE
-        await self.send_frame(PING, 0, stream_id, bytes(random.randint(size // 4, size)))
+        self._ping_id = random.randint(1, 32767)
+        self._ping_time = time.monotonic()
+        await self.send_frame(PING, 0, self._ping_id, bytes(random.randint(size // 4, size)))
 
     async def on_remote_recv(self, stream_id, data):
         await self.send_data_frame(stream_id, data)
@@ -419,7 +557,7 @@ class HxsCommon:
         self.logger.debug('start read from stream')
         count = 0
         while True:
-            await self._stream_context[stream_id].resume_reading.wait()
+            await self._stream_ctx[stream_id].resume_reading.wait()
             fut = remote_reader.read(self.bufsize)
             try:
                 data = await asyncio.wait_for(fut, timeout=6)
@@ -427,24 +565,24 @@ class HxsCommon:
                 await self.close_stream(stream_id)
                 break
             except asyncio.TimeoutError:
-                time_since_lastactive = time.monotonic() - self._stream_context[stream_id].last_active
+                time_since_lastactive = time.monotonic() - self._stream_ctx[stream_id].last_active
                 if time_since_lastactive < self.STREAM_TIMEOUT:
                     continue
-                if self._stream_context[stream_id].stream_status == OPEN and \
+                if self._stream_ctx[stream_id].stream_status == OPEN and \
                         time_since_lastactive < self.settings.tcp_idle_timeout:
                     continue
                 await self.close_stream(stream_id)
                 break
 
             if not data:
-                if not self._stream_context[stream_id].stream_status & EOF_SENT:
+                if not self._stream_ctx[stream_id].stream_status & EOF_SENT:
                     await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id)
-                    self._stream_context[stream_id].stream_status |= EOF_SENT
-                if self._stream_context[stream_id].stream_status == CLOSED:
+                    self._stream_ctx[stream_id].stream_status |= EOF_SENT
+                if self._stream_ctx[stream_id].stream_status == CLOSED:
                     await self.close_stream(stream_id)
                     return
                 break
-            if self._stream_context[stream_id].stream_status & EOF_SENT:
+            if self._stream_ctx[stream_id].stream_status & EOF_SENT:
                 break
             if count < 3:
                 await self.send_data_frame(stream_id, data, more_padding=True)
@@ -454,28 +592,28 @@ class HxsCommon:
 
         self.logger.debug('sid %s read_from_remote end. status %s',
                           stream_id,
-                          self._stream_context[stream_id].stream_status)
+                          self._stream_ctx[stream_id].stream_status)
 
-        while time.monotonic() - self._stream_context[stream_id].last_active < 12:
+        while time.monotonic() - self._stream_ctx[stream_id].last_active < 12:
             await asyncio.sleep(6)
         await self.close_stream(stream_id)
 
     def log_access(self, stream_id):
-        traffic = (self._stream_context[stream_id].traffic_from_client,
-                   self._stream_context[stream_id].traffic_from_remote)
+        traffic = (self._stream_ctx[stream_id].traffic_from_client,
+                   self._stream_ctx[stream_id].traffic_from_remote)
         self.user_mgr.user_access_log(self.server_addr[1],
-                                      self._stream_context[stream_id].host,
+                                      self._stream_ctx[stream_id].host,
                                       traffic,
                                       self.client_address,
                                       self.user,
                                       0)
 
     async def close_stream(self, stream_id):
-        if not self._stream_context[stream_id].resume_reading.is_set():
-            self._stream_context[stream_id].resume_reading.set()
-        if self._stream_context[stream_id].stream_status != CLOSED:
+        if not self._stream_ctx[stream_id].resume_reading.is_set():
+            self._stream_ctx[stream_id].resume_reading.set()
+        if self._stream_ctx[stream_id].stream_status != CLOSED:
             await self.send_frame(RST_STREAM, 0, stream_id)
-            self._stream_context[stream_id].stream_status = CLOSED
+            self._stream_ctx[stream_id].stream_status = CLOSED
         if stream_id in self._stream_writer:
             writer = self._stream_writer[stream_id]
             del self._stream_writer[stream_id]
@@ -488,8 +626,8 @@ class HxsCommon:
                 pass
 
     def close_relay(self, stream_id):
-        if self._stream_context[stream_id].stream_status == OPEN:
-            self._stream_context[stream_id].stream_status = CLOSED
+        if self._stream_ctx[stream_id].stream_status == OPEN:
+            self._stream_ctx[stream_id].stream_status = CLOSED
             asyncio.ensure_future(self.send_frame(RST_STREAM, 0, stream_id))
         if stream_id in self._stream_writer:
             del self._stream_writer[stream_id]
@@ -509,7 +647,7 @@ class HxsCommon:
         if wbuffer_size > REMOTE_WRITE_BUFFER * 16:
             self.logger.error('wbuffer_size > REMOTE_WRITE_BUFFER * 16')
 
-        async with self._stream_context[stream_id].drain_lock:
+        async with self._stream_ctx[stream_id].drain_lock:
             try:
                 # tell client to stop reading
                 await self.send_frame(WINDOW_UPDATE, 1, stream_id)
@@ -536,8 +674,12 @@ class HxsCommon:
 
     async def monitor(self):
         while not self._connection_lost:
-            await asyncio.sleep(1)
-            self.sent_rate = 0.2 * self._sent_counter + self.sent_rate * 0.8
-            self._sent_counter = 0
-            self.recv_rate = 0.2 * self._recv_counter + self.recv_rate * 0.8
-            self._recv_counter = 0
+            intv = self.PING_INTV_2
+            if self._stream_ctx[0].sent_counter > self.WINDOW_SIZE[0] or \
+                    self._stream_ctx[0].recv_counter > self.WINDOW_SIZE[0]:
+                intv = self.PING_INTV
+            delay = random.normalvariate(intv, sigma=intv / 6)
+            if delay < 0:
+                continue
+            await asyncio.sleep(delay)
+            await self.send_ping()
