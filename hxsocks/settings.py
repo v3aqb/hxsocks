@@ -10,7 +10,7 @@ class Settings:
 
     tcp_nodelay = False
     tcp_idle_timeout = 600
-    tcp_conn_timeout = 12
+    tcp_conn_timeout = 6
 
     udp_enable = False
     udp_timeout = 90
