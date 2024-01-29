@@ -30,14 +30,12 @@ import hashlib
 import asyncio
 import asyncio.streams
 
-from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, method_supported
+from hxcrypto import BufEmptyError, InvalidTag, IVError, is_aead, Encryptor, method_supported, SS_SUBKEY, SS_SUBKEY_2022
 from hxsocks.hxs2_conn import Hxs2Connection
 from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CLIENT_WRITE_BUFFER, REMOTE_WRITE_BUFFER
 from hxsocks.hxs4_handler import HXsocks4Handler
 from hxsocks.util import open_connection, parse_hostport
 
-SS_SUBKEY = "ss-subkey"
-SS_SUBKEY_2022 = 'shadowsocks 2022 session subkey'
 
 DEFAULT_METHOD = 'chacha20-ietf-poly1305'  # for hxsocks2 handshake
 
