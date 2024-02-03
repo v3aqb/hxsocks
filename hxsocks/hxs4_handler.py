@@ -22,6 +22,8 @@ import socket
 import io
 import random
 import hashlib
+import base64
+import math
 
 import asyncio
 import asyncio.streams
@@ -69,6 +71,8 @@ class HXsocks4Handler:
             pass
 
     async def read_request_headers(self):
+        '''return (header: io.BytesIO, b85encode: Boolean)
+        '''
         data = b''
         for _ in range(10):
             try:
@@ -77,9 +81,16 @@ class HXsocks4Handler:
                 if len(data) > self.encryptor.iv_len:
                     header = self.encryptor.decrypt(data)
                     header = io.BytesIO(header)
-                    return header
+                    return (header, False)
             except InvalidTag:
-                continue
+                if len(data) > self.encryptor.iv_len * 2:
+                    try:
+                        data_b85decode = base64.b85decode(data)
+                        header = self.encryptor.decrypt(data_b85decode)
+                        header = io.BytesIO(header)
+                        return (header, True)
+                    except (ValueError, InvalidTag):
+                        pass
         raise ValueError('unable to decrypt request')
 
     async def _handle(self, client_reader, client_writer):
@@ -90,8 +101,8 @@ class HXsocks4Handler:
 
         try:
             fut = self.read_request_headers()
-            header = await asyncio.wait_for(fut, timeout=READ_AUTH_TIMEOUT)
-        except (IVError, InvalidTag, ValueError) as err:
+            header, b85encode = await asyncio.wait_for(fut, timeout=READ_AUTH_TIMEOUT)
+        except (IVError, ValueError) as err:
             self.logger.error('read request header error, %s %r', self.client_address, err)
             await self.play_dead()
             return
@@ -108,9 +119,9 @@ class HXsocks4Handler:
 
         try:
             client, reply, shared_secret = self.user_mgr.hxs2_auth(client_pkey, client_auth)
-            self.logger.info('new key exchange. client: %s %s', client, self.client_address)
+            self.logger.info('new key exchange. client: %s %s, b85: %r', client, self.client_address, b85encode)
         except ValueError as err:
-            self.logger.error('key exchange failed. %s %s', err, self.client_address)
+            self.logger.error('key exchange failed. %s %s, b85: %r', err, self.client_address, b85encode)
             await self.play_dead()
             return
 
@@ -119,8 +130,17 @@ class HXsocks4Handler:
             mode_s |= 1
         if mode & 2 and 'rc4' in method_supported:
             mode_s |= 2
-        reply = reply + bytes((mode_s, )) + bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
+        reply += bytes((mode_s, ))
+        if b85encode:
+            padding_len_low = math.ceil((HANDSHAKE_SIZE // 2 - len(reply) * 0.25 - 8) * 0.8)
+            padding_len_high = math.ceil((HANDSHAKE_SIZE - len(reply) * 0.25 - 8) * 0.8)
+        else:
+            padding_len_low = HANDSHAKE_SIZE // 2
+            padding_len_high = HANDSHAKE_SIZE
+        reply += bytes(random.randint(max(padding_len_low, 0), max(padding_len_high, 0)))
         reply = self.encryptor.encrypt(reply)
+        if b85encode:
+            reply = base64.b85encode(reply)
         client_writer.write(reply)
 
         conn = Hxs2Connection(client_reader,
