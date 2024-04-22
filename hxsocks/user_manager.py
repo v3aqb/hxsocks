@@ -6,7 +6,8 @@ import hmac
 import logging
 from urllib.request import urlopen
 from collections import defaultdict, deque
-from hxcrypto import ECC
+
+from hxcrypto import ECC, exchange
 from hxsocks.apfilter import ap_filter
 
 
@@ -149,19 +150,12 @@ class UserManager:
             raise ValueError('public key already registered. user: %s' % user)
         if len(self.userpkeys[user]) > self.settings.conn_limit:
             raise ValueError('connection limit exceeded. user: %s' % user)
-        for key_len in (32, 24, 16):
-            try:
-                ecc = ECC(key_len)
-                shared_secret = ecc.get_dh_key(client_pkey)
-                break
-            except ValueError:
-                continue
-        else:
-            raise ValueError('key exchange fail')
+
+        xpubkey, shared_secret = exchange(client_pkey)
+
         user_pkey_md5 = hashlib.md5(client_pkey).digest()
         self.userpkeys[user].append(user_pkey_md5)
         self.pkeyuser[user_pkey_md5] = user
-        xpubkey = ecc.get_pub_key()
 
         hash_ = hmac.new(password.encode(), client_pkey + xpubkey + user.encode(), hashlib.sha256).digest()
         scert = self.server_cert.get_pub_key()
