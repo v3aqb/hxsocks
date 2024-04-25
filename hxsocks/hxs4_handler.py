@@ -112,7 +112,7 @@ class HXsocks4Handler:
 
         self.logger.debug('client_address: %s', self.client_address)
 
-        pklen = header.read(1)[0]  # 158
+        pklen = header.read(1)[0]  # 91, 120, 158
         client_pkey = header.read(pklen)
         client_auth = header.read(32)
         mode = header.read(1)[0]

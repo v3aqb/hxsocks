@@ -34,7 +34,7 @@ _FRAME_SPLIT_FREQ = 0.3
 _STREAM_TIMEOUT = 60
 _SPEED_LIMIT = 1048576 * 5
 RECV_WINDOW_SIZE = 2 ** 31 - 1
-_WINDOW_SIZE = (4096, 65536, 1048576 * 4)
+_WINDOW_SIZE = (8192, 65536, 1048576 * 4)
 
 DATA = 0
 HEADERS = 1
@@ -390,7 +390,7 @@ class HxsCommon:
                         self._rtt_ewma = resp_time * 0.2 + self._rtt_ewma * 0.8
                         self._rtt = min(self._rtt, resp_time)
                         self._ping_time = 0
-                        if max(resp_time, self._rtt_ewma) < self._rtt * 1.2:
+                        if max(resp_time, self._rtt_ewma) < self._rtt * 1.3:
                             self._stream_ctx[0].increase_window(self._rtt)
                         if resp_time > self._rtt * 2:
                             self._stream_ctx[0].reduce_window(self._rtt)
@@ -584,7 +584,7 @@ class HxsCommon:
                 break
             if self._stream_ctx[stream_id].stream_status & EOF_SENT:
                 break
-            if count < 3:
+            if count < 5:
                 await self.send_data_frame(stream_id, data, more_padding=True)
                 count += 1
             else:
