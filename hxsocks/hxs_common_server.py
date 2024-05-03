@@ -436,7 +436,8 @@ class HxsCommon:
     async def create_connection(self, stream_id, host, port, send_w=0):
         self.logger.info('connecting %s:%s %s %s', host, port, self.user, self.client_address)
         timelog = time.monotonic()
-        send_w = 0  # DISABLE PER_STREAM FLOW CONTROL
+        # DISABLE PER_STREAM FLOW CONTROL
+        send_w = 0
         recv_w = RECV_WINDOW_SIZE if send_w else 0
         self._stream_ctx[stream_id] = ForwardContext(self, stream_id, (host, port), send_w, recv_w)
         self.name = self.server_addr[1]
@@ -451,7 +452,7 @@ class HxsCommon:
             data = b'\x01' * random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE)
             await self.send_frame(RST_STREAM, 0, stream_id, data)
         else:
-            # tell client request success, header frame, first byte is \x00
+            # block china?
             try:
                 addr = writer.get_extra_info('peername')
                 self.user_mgr.user_access_ctrl(self.server_addr[1], addr, self.client_address, self.user, 0)
@@ -461,6 +462,7 @@ class HxsCommon:
                 await self.send_frame(RST_STREAM, 0, stream_id, data)
                 writer.close()
                 await writer.wait_closed()
+
             timelog = time.monotonic() - timelog
             if timelog > 1:
                 self.logger.warning('connect %s:%s connected, %.3fs', host, port, timelog)
@@ -473,7 +475,7 @@ class HxsCommon:
                 return
             # registor stream
             self._stream_writer[stream_id] = writer
-            # start forward from remote_reader to client_writer
+            # tell client request success, header frame, first byte is \x00
             flag = OPEN
             payload = b''
             if recv_w:
@@ -482,6 +484,7 @@ class HxsCommon:
             payload += bytes(random.randint(self.HEADER_SIZE // 4 - len(payload),
                                             self.HEADER_SIZE - len(payload)))
             await self.send_frame(HEADERS, flag, stream_id, payload)
+            # start forward from remote_reader to client_writer
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
