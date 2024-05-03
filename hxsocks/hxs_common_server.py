@@ -318,7 +318,6 @@ class HxsCommon:
                     data_len, = struct.unpack('>H', payload.read(2))
                     data = payload.read(data_len)
                     self._stream_ctx[0].data_recv(len(data))
-                    self._stream_ctx[stream_id].data_recv(len(data))
                     if self._stream_ctx[stream_id].stream_status & EOF_RECV:
                         self.logger.warning('data recv while stream closed. sid %d', stream_id)
                         continue
@@ -329,7 +328,7 @@ class HxsCommon:
                     # sent data to stream
                     try:
                         self._stream_writer[stream_id].write(data)
-                        await self.stream_writer_drain(stream_id)
+                        await self.stream_writer_drain(stream_id, len(data))
                     except ConnectionError:
                         # remote closed, reset stream
                         asyncio.ensure_future(self.close_stream(stream_id))
@@ -343,9 +342,7 @@ class HxsCommon:
                         port = struct.unpack('>H', payload.read(2))[0]
                         # rest of the payload is discarded
                         send_w = 0
-                        if frame_flags & FLOW_CONTROL and \
-                                self._stream_ctx[0].fc_enable and \
-                                not self._settings_async_drain:
+                        if frame_flags & FLOW_CONTROL:  # client want per stream flow control
                             send_w = struct.unpack('>I', payload.read(4))[0]
                         asyncio.ensure_future(self.create_connection(stream_id, host, port, send_w))
 
@@ -400,7 +397,7 @@ class HxsCommon:
                     # make no sense when client sending this...
                     self._gone = True
                 elif frame_type == WINDOW_UPDATE:  # 8
-                    if self._settings_async_drain and stream_id:
+                    if not self._stream_ctx[stream_id].fc_enable:
                         if frame_flags == 1:
                             self._stream_ctx[stream_id].resume_reading.clear()
                         else:
@@ -632,17 +629,20 @@ class HxsCommon:
         if stream_id in self._stream_writer:
             del self._stream_writer[stream_id]
 
-    async def stream_writer_drain(self, stream_id):
-        if self._settings_async_drain:
-            asyncio.ensure_future(self.async_drain(stream_id))
+    async def stream_writer_drain(self, stream_id, data_len):
+        if self._settings_async_drain or self._stream_ctx[stream_id].fc_enable:
+            asyncio.ensure_future(self.async_drain(stream_id, data_len))
         else:
             await self._stream_writer[stream_id].drain()
+            self._stream_ctx[stream_id].data_recv(data_len)
 
-    async def async_drain(self, stream_id):
+    async def async_drain(self, stream_id, data_len):
         if not isinstance(self._stream_writer[stream_id], asyncio.StreamWriter):
+            self._stream_ctx[stream_id].data_recv(data_len)
             return
         wbuffer_size = self._stream_writer[stream_id].transport.get_write_buffer_size()
         if wbuffer_size <= REMOTE_WRITE_BUFFER:
+            self._stream_ctx[stream_id].data_recv(data_len)
             return
         if wbuffer_size > REMOTE_WRITE_BUFFER * 16:
             self.logger.error('wbuffer_size > REMOTE_WRITE_BUFFER * 16')
@@ -650,13 +650,15 @@ class HxsCommon:
         async with self._stream_ctx[stream_id].drain_lock:
             try:
                 # tell client to stop reading
-                await self.send_frame(WINDOW_UPDATE, 1, stream_id)
+                if not self._stream_ctx[stream_id].fc_enable:
+                    await self.send_frame(WINDOW_UPDATE, 1, stream_id)
                 await self._stream_writer[stream_id].drain()
                 # tell client to resume reading
-                await self.send_frame(WINDOW_UPDATE, 0, stream_id)
+                if not self._stream_ctx[stream_id].fc_enable:
+                    await self.send_frame(WINDOW_UPDATE, 0, stream_id)
             except OSError:
                 await self.close_stream(stream_id)
-                return
+        self._stream_ctx[stream_id].data_recv(data_len)
 
     async def send_dgram2(self, client_id, udp_sid, data):
         # remote addr included in data, as shadowsocks format
