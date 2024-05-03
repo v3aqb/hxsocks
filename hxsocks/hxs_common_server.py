@@ -32,7 +32,6 @@ _PONG_FREQ = 0.3
 _FRAME_SIZE_LIMIT = 16386
 _FRAME_SPLIT_FREQ = 0.3
 _STREAM_TIMEOUT = 60
-_SPEED_LIMIT = 1048576 * 5
 RECV_WINDOW_SIZE = 2 ** 31 - 1
 _WINDOW_SIZE = (8192, 65536, 1048576 * 4)
 
@@ -209,7 +208,6 @@ class HxsCommon:
     FRAME_SIZE_LIMIT = _FRAME_SIZE_LIMIT
     FRAME_SPLIT_FREQ = _FRAME_SPLIT_FREQ
     STREAM_TIMEOUT = _STREAM_TIMEOUT
-    SPEED_LIMIT = _SPEED_LIMIT
     WINDOW_SIZE = _WINDOW_SIZE
 
     def __init__(self, mode):
@@ -502,8 +500,6 @@ class HxsCommon:
         ct_ = self._cipher.encrypt(data)
 
         await self._send_frame(ct_)
-        if frame_type is DATA and not self._stream_ctx[0].fc_enable:
-            await asyncio.sleep(len(payload) / self.SPEED_LIMIT)
 
     async def send_one_data_frame(self, stream_id, data, more_padding=False):
         if self._stream_ctx[stream_id].stream_status & EOF_SENT:
