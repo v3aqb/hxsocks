@@ -29,7 +29,8 @@ _PING_INTV_2 = 20
 _PING_SIZE = 256
 _PONG_SIZE = 256
 _PONG_FREQ = 0.3
-_FRAME_SIZE_LIMIT = 16386
+_FRAME_SIZE_LIMIT = 4096 - 22
+_FRAME_SIZE_LIMIT2 = 1024 - 22
 _FRAME_SPLIT_FREQ = 0.3
 _STREAM_TIMEOUT = 60
 RECV_WINDOW_SIZE = 2 ** 31 - 1
@@ -206,6 +207,7 @@ class HxsCommon:
     PONG_SIZE = _PONG_SIZE
     PONG_FREQ = _PONG_FREQ
     FRAME_SIZE_LIMIT = _FRAME_SIZE_LIMIT
+    FRAME_SIZE_LIMIT2 = _FRAME_SIZE_LIMIT2
     FRAME_SPLIT_FREQ = _FRAME_SPLIT_FREQ
     STREAM_TIMEOUT = _STREAM_TIMEOUT
     WINDOW_SIZE = _WINDOW_SIZE
@@ -309,13 +311,16 @@ class HxsCommon:
 
                 if frame_type in (DATA, HEADERS, RST_STREAM, UDP_DGRAM2):
                     self._last_active = time.monotonic()
-                    if random.random() < self.PONG_FREQ:
-                        await self.send_pong()
 
                 self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
                 if frame_type == DATA:  # 0
                     # check if remote socket writable
                     # first 2 bytes of payload indicates data_len
+                    if frame_flags & 1:
+                        self.send_pong()
+                    elif random.random() < self.PONG_FREQ:
+                        await self.send_pong()
+
                     data_len, = struct.unpack('>H', payload.read(2))
                     data = payload.read(data_len)
                     self._stream_ctx[0].data_recv(len(data))
@@ -504,7 +509,7 @@ class HxsCommon:
 
         await self._send_frame(ct_)
 
-    async def send_one_data_frame(self, stream_id, data, more_padding=False):
+    async def send_one_data_frame(self, stream_id, data, more_padding=False, frag=False):
         if self._stream_ctx[stream_id].stream_status & EOF_SENT:
             return
         await self._stream_ctx[stream_id].acquire(len(data))
@@ -523,15 +528,17 @@ class HxsCommon:
                 padding_len = random.randint(8, 255)
             padding = bytes(padding_len)
         payload += padding
-        await self.send_frame(DATA, 0, stream_id, payload)
+        flag = 1 if frag else 0
+        await self.send_frame(DATA, flag, stream_id, payload)
 
     async def send_data_frame(self, stream_id, data, more_padding=False):
-        if len(data) > self.FRAME_SIZE_LIMIT and random.random() < self.FRAME_SPLIT_FREQ:
+        frame_size_limit = self.FRAME_SIZE_LIMIT2 if more_padding else self.FRAME_SIZE_LIMIT
+        if len(data) > frame_size_limit and (more_padding or random.random() < self.FRAME_SPLIT_FREQ):
             data = io.BytesIO(data)
-            data_ = data.read(random.randint(64, self.FRAME_SIZE_LIMIT))
+            data_ = data.read(random.randint(64, frame_size_limit))
             while data_:
                 await self.send_one_data_frame(stream_id, data_)
-                data_ = data.read(random.randint(64, self.FRAME_SIZE_LIMIT))
+                data_ = data.read(random.randint(64, frame_size_limit))
         else:
             await self.send_one_data_frame(stream_id, data, more_padding)
 
