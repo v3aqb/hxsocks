@@ -165,10 +165,6 @@ class HXsocksHandler:
             self.logger.error('_handle error %r', err, exc_info=True)
         if not client_writer.is_closing():
             client_writer.close()
-        try:
-            await client_writer.wait_closed()
-        except OSError:
-            pass
 
     async def read_request_headers(self):
         if self.server.method.startswith('2022'):
@@ -345,10 +341,6 @@ class HXsocksHandler:
         self.user_mgr.user_access_log(self.address[1], (addr, port), traffic, self.client_address, self.server.psk, 0)
         if not remote_writer.is_closing():
             remote_writer.close()
-        try:
-            await remote_writer.wait_closed()
-        except ConnectionError:
-            pass
 
     async def ss_forward_a(self, write_to, context):
         # data from ss client, decrypt, sent to remote
@@ -360,9 +352,13 @@ class HXsocksHandler:
             except asyncio.TimeoutError:
                 idle_time = time.monotonic() - context.last_active
                 if context.local_eof and idle_time > 60:
-                    break
+                    context.local_eof = True
+                    write_to.close()
+                    return
                 if idle_time > self.settings.tcp_idle_timeout:
-                    break
+                    context.local_eof = True
+                    write_to.close()
+                    return
                 continue
             except (BufEmptyError, asyncio.IncompleteReadError, InvalidTag, OSError):
                 break
@@ -375,12 +371,10 @@ class HXsocksHandler:
                 await write_to.drain()
             except ConnectionError:
                 context.local_eof = True
+                write_to.close()
                 return
         context.local_eof = True
-        try:
-            write_to.write_eof()
-        except OSError:
-            pass
+        write_to.write_eof()
 
     async def ss_forward_b(self, read_from, write_to, context):
         # data from remote, encrypt, sent to client
@@ -392,9 +386,13 @@ class HXsocksHandler:
             except asyncio.TimeoutError:
                 idle_time = time.monotonic() - context.last_active
                 if context.local_eof and idle_time > 60:
-                    break
+                    context.local_eof = True
+                    write_to.close()
+                    return
                 if idle_time > self.settings.tcp_idle_timeout:
-                    break
+                    context.local_eof = True
+                    write_to.close()
+                    return
                 continue
             except OSError:
                 break
@@ -409,10 +407,8 @@ class HXsocksHandler:
                 write_to.write(data)
                 await write_to.drain()
             except (ConnectionError, RuntimeError):
-                context.remote_eof = True
+                context.local_eof = True
+                write_to.close()
                 return
         context.remote_eof = True
-        try:
-            write_to.write_eof()
-        except (OSError, RuntimeError):
-            pass
+        write_to.write_eof()
