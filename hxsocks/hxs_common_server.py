@@ -14,8 +14,8 @@ from hxsocks.hxs_udp_relay import HxsUDPRelayManager, parse_dgram2
 CTX = 'hxsocks2'
 
 OPEN = 0
-EOF_SENT = 1  # SENT END_STREAM
-EOF_RECV = 2  # RECV END_STREAM
+EOF_FROM_ENDPOINT = 1
+EOF_FROM_CONN = 2
 CLOSED = 3
 
 HANDSHAKE_SIZE = 256
@@ -324,7 +324,7 @@ class HxsCommon:
                     data_len, = struct.unpack('>H', payload.read(2))
                     data = payload.read(data_len)
                     self._stream_ctx[0].data_recv(len(data))
-                    if self._stream_ctx[stream_id].stream_status & EOF_RECV:
+                    if self._stream_ctx[stream_id].stream_status & EOF_FROM_CONN:
                         self.logger.warning('data recv while stream closed. sid %d', stream_id)
                         continue
                     if len(data) != data_len:
@@ -357,7 +357,7 @@ class HxsCommon:
                                           stream_id,
                                           self._stream_ctx[stream_id].stream_status)
                         if frame_flags & END_STREAM_FLAG:
-                            self._stream_ctx[stream_id].stream_status |= EOF_RECV
+                            self._stream_ctx[stream_id].stream_status |= EOF_FROM_CONN
                             if stream_id in self._stream_writer:
                                 try:
                                     self._stream_writer[stream_id].write_eof()
@@ -510,7 +510,7 @@ class HxsCommon:
         await self._send_frame(ct_)
 
     async def send_one_data_frame(self, stream_id, data, more_padding=False, frag=False):
-        if self._stream_ctx[stream_id].stream_status & EOF_SENT:
+        if self._stream_ctx[stream_id].stream_status & EOF_FROM_ENDPOINT:
             return
         await self._stream_ctx[stream_id].acquire(len(data))
         await self._stream_ctx[0].acquire(len(data))
@@ -581,14 +581,14 @@ class HxsCommon:
                 break
 
             if not data:
-                if not self._stream_ctx[stream_id].stream_status & EOF_SENT:
+                if not self._stream_ctx[stream_id].stream_status & EOF_FROM_ENDPOINT:
                     await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id)
-                    self._stream_ctx[stream_id].stream_status |= EOF_SENT
+                    self._stream_ctx[stream_id].stream_status |= EOF_FROM_ENDPOINT
                 if self._stream_ctx[stream_id].stream_status == CLOSED:
                     await self.close_stream(stream_id)
                     return
                 break
-            if self._stream_ctx[stream_id].stream_status & EOF_SENT:
+            if self._stream_ctx[stream_id].stream_status & EOF_FROM_ENDPOINT:
                 break
             if count < 5:
                 await self.send_data_frame(stream_id, data, more_padding=True)
