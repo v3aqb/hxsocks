@@ -404,10 +404,11 @@ class HxsCommon:
                     self._gone = True
                 elif frame_type == WINDOW_UPDATE:  # 8
                     if not self._stream_ctx[stream_id].fc_enable:
-                        if frame_flags == 1:
-                            self._stream_ctx[stream_id].resume_reading.clear()
-                        else:
+                        self._settings_async_drain = True
+                        if frame_flags == 0:
                             self._stream_ctx[stream_id].resume_reading.set()
+                        else:
+                            self._stream_ctx[stream_id].resume_reading.clear()
                     else:
                         size = struct.unpack('>I', payload.read(4))[0]
                         self._stream_ctx[stream_id].window_update(size)
