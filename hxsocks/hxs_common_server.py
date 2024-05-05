@@ -538,7 +538,7 @@ class HxsCommon:
             data = io.BytesIO(data)
             data_ = data.read(random.randint(64, frame_size_limit))
             while data_:
-                await self.send_one_data_frame(stream_id, data_)
+                await self.send_one_data_frame(stream_id, data_, more_padding, frag=True)
                 data_ = data.read(random.randint(64, frame_size_limit))
         else:
             await self.send_one_data_frame(stream_id, data, more_padding)
