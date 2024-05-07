@@ -19,22 +19,11 @@ EOF_FROM_CONN = 2
 CLOSED = 3
 
 HANDSHAKE_SIZE = 256
-_HEADER_SIZE = 256
 CLIENT_WRITE_BUFFER = 131072
 REMOTE_WRITE_BUFFER = 131072
 READ_AUTH_TIMEOUT = 12
 READ_FRAME_TIMEOUT = 8
-_PING_INTV = 3
-_PING_INTV_2 = 20
-_PING_SIZE = 256
-_PONG_SIZE = 256
-_PONG_FREQ = 0.3
-_FRAME_SIZE_LIMIT = 4096 - 22
-_FRAME_SIZE_LIMIT2 = 1024 - 22
-_FRAME_SPLIT_FREQ = 0.3
-_STREAM_TIMEOUT = 60
 RECV_WINDOW_SIZE = 2 ** 31 - 1
-_WINDOW_SIZE = (8192, 65536, 1048576 * 4)
 
 DATA = 0
 HEADERS = 1
@@ -198,19 +187,32 @@ class ReadFrameError(Exception):
         self.err = err
 
 
-class HxsCommon:
+class HC:
+    MAX_STREAM_ID = 32767
+    MAX_CONNECTION = 2
+    CLIENT_WRITE_BUFFER = 131072
+    CONNECTING_LIMIT = 3
+    STREAM_TIMEOUT = 60
+
+    READ_FRAME_TIMEOUT = 8
+    PING_TIMEOUT = 8
+    IDLE_TIMEOUT = 300
+    PING_INTV = 3
+    PING_INTV_2 = 20
+
+    CLIENT_AUTH_PADDING = 256
+    HEADER_SIZE = 256
+    PING_SIZE = 256
+    PONG_SIZE = 256
+    PONG_FREQ = 0.2
+    FRAME_SIZE_LIMIT = 4096 - 22
+    FRAME_SIZE_LIMIT2 = 1024 - 22
+    FRAME_SPLIT_FREQ = 0.3
+    WINDOW_SIZE = (4096, 65536, 1048576 * 4)
+
+
+class HxsCommon(HC):
     bufsize = 65535 - 22
-    HEADER_SIZE = _HEADER_SIZE
-    PING_INTV = _PING_INTV
-    PING_INTV_2 = _PING_INTV_2
-    PING_SIZE = _PING_SIZE
-    PONG_SIZE = _PONG_SIZE
-    PONG_FREQ = _PONG_FREQ
-    FRAME_SIZE_LIMIT = _FRAME_SIZE_LIMIT
-    FRAME_SIZE_LIMIT2 = _FRAME_SIZE_LIMIT2
-    FRAME_SPLIT_FREQ = _FRAME_SPLIT_FREQ
-    STREAM_TIMEOUT = _STREAM_TIMEOUT
-    WINDOW_SIZE = _WINDOW_SIZE
 
     def __init__(self, mode):
         self._mode = mode
@@ -231,7 +233,9 @@ class HxsCommon:
         self.client_id = ''
 
         self._init_time = time.monotonic()
-        self._last_active = self._init_time
+        self._last_recv = time.monotonic()
+        self._last_send = time.monotonic()
+        self._last_ping = 0
         self._ping_id = 0
         self._ping_time = 0
         self._rtt = 5
@@ -272,6 +276,10 @@ class HxsCommon:
                 raise error
         return frame_data
 
+    @property
+    def _last_active(self):
+        return max(self._last_recv, self._last_send)
+
     async def handle_connection(self):
         self.logger.debug('start recieving frames...')
         HxsUDPRelayManager.config(self.settings)
@@ -310,28 +318,30 @@ class HxsCommon:
                 payload = io.BytesIO(payload)
 
                 if frame_type in (DATA, HEADERS, RST_STREAM, UDP_DGRAM2):
-                    self._last_active = time.monotonic()
+                    self._last_recv = time.monotonic()
 
                 self.logger.debug('recv frame_type: %d, stream_id: %d', frame_type, stream_id)
                 if frame_type == DATA:  # 0
-                    # check if remote socket writable
                     # first 2 bytes of payload indicates data_len
+                    data_len, = struct.unpack('>H', payload.read(2))
+                    data = payload.read(data_len)
+                    self._stream_ctx[0].data_recv(len(data))
+
+                    if len(data) != data_len:
+                        # something went wrong, destory connection
+                        self.logger.error('len(data) != data_len')
+                        break
+
                     if frame_flags & 1:
                         self.send_pong()
                     elif random.random() < self.PONG_FREQ:
                         await self.send_pong()
 
-                    data_len, = struct.unpack('>H', payload.read(2))
-                    data = payload.read(data_len)
-                    self._stream_ctx[0].data_recv(len(data))
-                    if self._stream_ctx[stream_id].stream_status & EOF_FROM_CONN:
-                        self.logger.warning('data recv while stream closed. sid %d', stream_id)
-                        continue
-                    if len(data) != data_len:
-                        # something went wrong, destory connection
-                        self.logger.error('data_len mismatch')
-                        break
                     # sent data to stream
+                    if self._stream_ctx[stream_id].stream_status & EOF_FROM_CONN:
+                        self.logger.warning('DATA recv Stream CLOSED, sid %d', stream_id)
+                        continue
+
                     try:
                         self._stream_writer[stream_id].write(data)
                         await self.stream_writer_drain(stream_id, len(data))
@@ -499,14 +509,15 @@ class HxsCommon:
         if self._connection_lost:
             self.logger.debug('send_frame, connection lost')
             return
-        if frame_type in (DATA, HEADERS, UDP_DGRAM2):
-            self._last_active = time.monotonic()
+        if frame_type != PING:
+            self._last_send = time.monotonic()
+        if frame_type == PING and flags == 0:
+            self._last_ping = time.monotonic()
         if not payload:
             payload = bytes(random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE))
 
         header = struct.pack('>BBH', frame_type, flags, stream_id)
-        data = header + payload
-        ct_ = self._cipher.encrypt(data)
+        ct_ = self._cipher.encrypt(header + payload)
 
         await self._send_frame(ct_)
 
