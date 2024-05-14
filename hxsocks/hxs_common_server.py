@@ -130,7 +130,7 @@ class ForwardContext:
         # change recv window
         new_window = int(new_window)
         new_window = max(new_window, self._conn.WINDOW_SIZE[0])
-        new_window = max(new_window, self._conn.WINDOW_SIZE[2])
+        new_window = min(new_window, self._conn.WINDOW_SIZE[2])
         old_size = self.recv_w
         self.recv_w = new_window
         self._recv_w_counter += new_window - old_size
