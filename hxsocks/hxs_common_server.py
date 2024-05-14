@@ -109,7 +109,7 @@ class ForwardContext:
                 self._recv_w_counter = 0
                 payload = struct.pack('>I', w_counter)
                 payload += bytes(random.randint(self._conn.HEADER_SIZE // 4 - 4, self._conn.HEADER_SIZE - 4))
-                asyncio.ensure_future(self._conn.send_frame(WINDOW_UPDATE, 0, self._stream_id, payload))
+                self._conn.send_frame(WINDOW_UPDATE, 0, self._stream_id, payload)
 
     def enable_fc(self, send_w, recv_w):
         if self.fc_enable:
@@ -139,7 +139,7 @@ class ForwardContext:
             self._recv_w_counter = 0
             payload = struct.pack('>I', w_counter)
             payload += bytes(random.randint(self._conn.HEADER_SIZE // 4 - 4, self._conn.HEADER_SIZE - 4))
-            asyncio.ensure_future(self._conn.send_frame(WINDOW_UPDATE, 0, self._stream_id, payload))
+            self._conn.send_frame(WINDOW_UPDATE, 0, self._stream_id, payload)
         self._conn.logger.debug(f'{self._conn.name}: update window form {old_size} to {self.recv_w}')
 
     def reduce_window(self, rtt):
@@ -232,6 +232,7 @@ class HxsCommon(HC):
         self.udp_uid = ''
         self.client_id = ''
 
+        self.connection_lost = False
         self._init_time = time.monotonic()
         self._last_recv = time.monotonic()
         self._last_send = time.monotonic()
@@ -335,7 +336,7 @@ class HxsCommon(HC):
                     if frame_flags & 1:
                         self.send_pong()
                     elif random.random() < self.PONG_FREQ:
-                        await self.send_pong()
+                        self.send_pong()
 
                     # sent data to stream
                     if self._stream_ctx[stream_id].stream_status & EOF_FROM_CONN:
@@ -394,10 +395,10 @@ class HxsCommon(HC):
                             settings |= FLOW_CONTROL
                     payload_ += bytes(random.randint(self.HEADER_SIZE // 4 - len(payload_),
                                                      self.HEADER_SIZE - len(payload_)))
-                    await self.send_frame(SETTINGS, 1, settings, payload_)
+                    self.send_frame(SETTINGS, 1, settings, payload_)
                 elif frame_type == PING:  # 6
                     if frame_flags == 0:
-                        await self.send_pong(stream_id)
+                        self.send_pong(stream_id)
                     elif self._ping_time and self._ping_id == stream_id:
                         resp_time = time.monotonic() - self._ping_time
                         self._rtt_ewma = resp_time * 0.2 + self._rtt_ewma * 0.8
@@ -466,7 +467,7 @@ class HxsCommon(HC):
             # tell client request failed.
             self.logger.error('connect %s:%s failed: %r, proxy %r', host, port, err, self._proxy)
             data = b'\x01' * random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE)
-            await self.send_frame(RST_STREAM, 0, stream_id, data)
+            self.send_frame(RST_STREAM, 0, stream_id, data)
         else:
             # block china?
             try:
@@ -475,7 +476,7 @@ class HxsCommon(HC):
             except ValueError as err:
                 self.logger.error('connect %s:%s failed: %r, proxy %r', host, port, err, self._proxy)
                 data = b'\x01' * random.randint(self.HEADER_SIZE // 4, self.HEADER_SIZE)
-                await self.send_frame(RST_STREAM, 0, stream_id, data)
+                self.send_frame(RST_STREAM, 0, stream_id, data)
                 writer.close()
                 await writer.wait_closed()
 
@@ -499,12 +500,12 @@ class HxsCommon(HC):
                 payload += struct.pack('>I', recv_w)
             payload += bytes(random.randint(self.HEADER_SIZE // 4 - len(payload),
                                             self.HEADER_SIZE - len(payload)))
-            await self.send_frame(HEADERS, flag, stream_id, payload)
+            self.send_frame(HEADERS, flag, stream_id, payload)
             # start forward from remote_reader to client_writer
             task = asyncio.ensure_future(self.read_from_remote(stream_id, reader))
             self._stream_task[stream_id] = task
 
-    async def send_frame(self, frame_type, flags, stream_id, payload=None):
+    def send_frame(self, frame_type, flags, stream_id, payload=None):
         self.logger.debug('send frame_type: %d, stream_id: %d', frame_type, stream_id)
         if self._connection_lost:
             self.logger.debug('send_frame, connection lost')
@@ -519,13 +520,11 @@ class HxsCommon(HC):
         header = struct.pack('>BBH', frame_type, flags, stream_id)
         ct_ = self._cipher.encrypt(header + payload)
 
-        await self._send_frame(ct_)
+        self._send_frame_data(ct_)
 
-    async def send_one_data_frame(self, stream_id, data, more_padding=False, frag=False):
+    def send_one_data_frame(self, stream_id, data, more_padding=False, frag=False):
         if self._stream_ctx[stream_id].stream_status & EOF_FROM_ENDPOINT:
             return
-        await self._stream_ctx[stream_id].acquire(len(data))
-        await self._stream_ctx[0].acquire(len(data))
         payload = struct.pack('>H', len(data)) + data
         diff = self.FRAME_SIZE_LIMIT - len(data)
         if 0 <= diff < self.FRAME_SIZE_LIMIT * 0.05:
@@ -541,7 +540,7 @@ class HxsCommon(HC):
             padding = bytes(padding_len)
         payload += padding
         flag = 1 if frag else 0
-        await self.send_frame(DATA, flag, stream_id, payload)
+        self.send_frame(DATA, flag, stream_id, payload)
 
     async def send_data_frame(self, stream_id, data, more_padding=False):
         frame_size_limit = self.FRAME_SIZE_LIMIT2 if more_padding else self.FRAME_SIZE_LIMIT
@@ -549,27 +548,28 @@ class HxsCommon(HC):
             data = io.BytesIO(data)
             data_ = data.read(random.randint(64, frame_size_limit))
             while data_:
-                await self.send_one_data_frame(stream_id, data_, more_padding, frag=True)
+                await self._stream_ctx[stream_id].acquire(len(data_))
+                await self.acquire(len(data_))
+                self.send_one_data_frame(stream_id, data_, more_padding, frag=True)
                 data_ = data.read(random.randint(64, frame_size_limit))
         else:
-            await self.send_one_data_frame(stream_id, data, more_padding)
+            await self._stream_ctx[stream_id].acquire(len(data))
+            await self.acquire(len(data))
+            self.send_one_data_frame(stream_id, data, more_padding)
 
-    async def send_pong(self, stream_id=0, size=None):
+    def send_pong(self, stream_id=0, size=None):
         if not size:
             size = self.PONG_SIZE
-        await self.send_frame(PING, PONG, stream_id, bytes(random.randint(size // 4, size)))
+        self.send_frame(PING, PONG, stream_id, bytes(random.randint(size // 4, size)))
 
-    async def send_ping(self, size=None):
+    def send_ping(self, size=None):
         if self._ping_time:
             return
         if not size:
             size = self.PING_SIZE
         self._ping_id = random.randint(1, 32767)
         self._ping_time = time.monotonic()
-        await self.send_frame(PING, 0, self._ping_id, bytes(random.randint(size // 4, size)))
-
-    async def on_remote_recv(self, stream_id, data):
-        await self.send_data_frame(stream_id, data)
+        self.send_frame(PING, 0, self._ping_id, bytes(random.randint(size // 4, size)))
 
     async def read_from_remote(self, stream_id, remote_reader):
         self.logger.debug('start read from stream')
@@ -594,7 +594,7 @@ class HxsCommon(HC):
 
             if not data:
                 if not self._stream_ctx[stream_id].stream_status & EOF_FROM_ENDPOINT:
-                    await self.send_frame(HEADERS, END_STREAM_FLAG, stream_id)
+                    self.send_frame(HEADERS, END_STREAM_FLAG, stream_id)
                     self._stream_ctx[stream_id].stream_status |= EOF_FROM_ENDPOINT
                 if self._stream_ctx[stream_id].stream_status == CLOSED:
                     await self.close_stream(stream_id)
@@ -630,7 +630,7 @@ class HxsCommon(HC):
         if not self._stream_ctx[stream_id].resume_reading.is_set():
             self._stream_ctx[stream_id].resume_reading.set()
         if self._stream_ctx[stream_id].stream_status != CLOSED:
-            await self.send_frame(RST_STREAM, 0, stream_id)
+            self.send_frame(RST_STREAM, 0, stream_id)
             self._stream_ctx[stream_id].stream_status = CLOSED
         if stream_id in self._stream_writer:
             writer = self._stream_writer[stream_id]
@@ -646,7 +646,7 @@ class HxsCommon(HC):
     def close_relay(self, stream_id):
         if self._stream_ctx[stream_id].stream_status == OPEN:
             self._stream_ctx[stream_id].stream_status = CLOSED
-            asyncio.ensure_future(self.send_frame(RST_STREAM, 0, stream_id))
+            self.send_frame(RST_STREAM, 0, stream_id)
         if stream_id in self._stream_writer:
             del self._stream_writer[stream_id]
 
@@ -672,24 +672,31 @@ class HxsCommon(HC):
             try:
                 # tell client to stop reading
                 if not self._stream_ctx[stream_id].fc_enable:
-                    await self.send_frame(WINDOW_UPDATE, 1, stream_id)
+                    self.send_frame(WINDOW_UPDATE, 1, stream_id)
                 await self._stream_writer[stream_id].drain()
                 # tell client to resume reading
                 if not self._stream_ctx[stream_id].fc_enable:
-                    await self.send_frame(WINDOW_UPDATE, 0, stream_id)
+                    self.send_frame(WINDOW_UPDATE, 0, stream_id)
             except OSError:
                 await self.close_stream(stream_id)
         self._stream_ctx[stream_id].data_recv(data_len)
 
-    async def send_dgram2(self, client_id, udp_sid, data):
+    def send_dgram2(self, client_id, udp_sid, data):
         # remote addr included in data, as shadowsocks format
         payload = client_id + udp_sid
         payload += struct.pack(b'!H', len(data))
         payload += data
         payload += bytes(random.randint(self.PING_SIZE // 4, self.PING_SIZE))
-        await self.send_frame(UDP_DGRAM2, 0, 0, payload)
+        self.send_frame(UDP_DGRAM2, 0, 0, payload)
 
-    async def _send_frame(self, ct_):
+    async def acquire(self, size):
+        await self.drain()
+        await self._stream_ctx[0].acquire(size)
+
+    def _send_frame_data(self, ct_):
+        raise NotImplementedError
+
+    async def drain(self):
         raise NotImplementedError
 
     async def read_frame(self, timeout):
@@ -705,4 +712,4 @@ class HxsCommon(HC):
             if delay < 0:
                 continue
             await asyncio.sleep(delay)
-            await self.send_ping()
+            self.send_ping()

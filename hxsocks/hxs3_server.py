@@ -84,18 +84,22 @@ class hxs3_handler(HxsCommon):
 
         self.settings = server.settings
 
-        self.websocket = None
+        self._websocket = None
+
+        self._sendq = asyncio.Queue()
+        self._sending = False
+        self._wbuffer_size = 0
 
     async def handle(self, websocket, path):
-        self.websocket = websocket
+        self._websocket = websocket
 
-        self.client_address = self.websocket.remote_address
-        xff = self.websocket.request_headers.get_all('X-Forwarded-For')
+        self.client_address = self._websocket.remote_address
+        xff = self._websocket.request_headers.get_all('X-Forwarded-For')
         if xff:
             self.client_address = (xff[0], 0)
 
         try:
-            fut = self.websocket.recv()
+            fut = self._websocket.recv()
             client_auth = await asyncio.wait_for(fut, timeout=READ_AUTH_TIMEOUT)
         except (asyncio.TimeoutError, ConnectionClosed) as err:
             self.logger.error('read client auth failed. client: %s, %r', self.client_address, err)
@@ -127,7 +131,7 @@ class hxs3_handler(HxsCommon):
         reply = reply + chr(self._mode).encode() + \
             bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
         try:
-            await self.websocket.send(reply)
+            await self._websocket.send(reply)
         except ConnectionClosed:
             self.logger.error('send auth reply fail.')
             self._connection_lost = True
@@ -141,7 +145,7 @@ class hxs3_handler(HxsCommon):
         count = random.randint(12, 30)
         for _ in range(count):
             timeout = random.random()
-            fut = self.websocket.recv()
+            fut = self._websocket.recv()
             try:
                 await asyncio.wait_for(fut, timeout)
             except asyncio.TimeoutError:
@@ -151,16 +155,40 @@ class hxs3_handler(HxsCommon):
 
     async def read_frame(self, timeout=30):
         try:
-            fut = self.websocket.recv()
+            fut = self._websocket.recv()
             frame_data = await asyncio.wait_for(fut, timeout=timeout)
             frame_data = self.decrypt_frame(frame_data)
             return frame_data
         except (ConnectionClosed, RuntimeError, InvalidTag) as err:
             raise ReadFrameError(err) from err
 
-    async def _send_frame(self, ct_):
-        try:
-            await self.websocket.send(ct_)
-        except ConnectionClosed as err:
-            self.logger.error('send_frame fail: %r', err)
-            self._connection_lost = True
+    def _send_frame_data(self, ct_):
+        self._sendq.put_nowait(ct_)
+        self._wbuffer_size += len(ct_)
+        asyncio.ensure_future(self._maybe_start_sending())
+
+    async def _maybe_start_sending(self):
+        if self._sending:
+            return
+        self._sending = True
+        while True:
+            try:
+                ct_ = self._sendq.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+            if self.connection_lost:
+                self._sendq.task_done()
+                continue
+            try:
+                await self._websocket.send(ct_)
+            except ConnectionClosed:
+                self.connection_lost = True
+            finally:
+                self._sendq.task_done()
+        self._sending = False
+
+    async def drain(self):
+        if self.connection_lost:
+            raise ConnectionError(0, 'ConnectionClosed')
+        await self._sendq.join()
+        self._wbuffer_size = 0

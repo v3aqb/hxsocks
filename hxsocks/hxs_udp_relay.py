@@ -62,7 +62,7 @@ class HxsUDPRelayManager:
             logger.warning('on_remote_recv, hxs_connection NOT FOUND!')
             return
         hxs_conn = cls.hxs_conn_store[client_id]
-        await hxs_conn.send_dgram2(client_id, udp_sid, buf)
+        hxs_conn.send_dgram2(client_id, udp_sid, buf)
 
     @classmethod
     def close_relay(cls, client_addr):

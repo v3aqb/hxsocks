@@ -80,13 +80,16 @@ class Hxs2Connection(HxsCommon):
         except (ConnectionError, asyncio.TimeoutError, asyncio.IncompleteReadError, InvalidTag) as err:
             raise ReadFrameError(err) from err
 
-    async def _send_frame(self, ct_):
+    def _send_frame_data(self, ct_):
         frame_len = struct.pack('>H', len(ct_))
         if self.encrypt_flen:
             frame_len = self._flen_cipher.encrypt(frame_len)
         self._client_writer.write(frame_len + ct_)
+
+    async def drain(self):
         try:
             await self._client_writer.drain()
         except ConnectionError as err:
             self.logger.error('send_frame fail: %r', err)
             self._connection_lost = True
+            raise
