@@ -102,3 +102,26 @@ async def open_connection(addr, port, proxy, settings):
         soc = remote_writer.transport.get_extra_info('socket')
         soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     return remote_reader, remote_writer
+
+
+async def create_connection(protocol, addr, port, proxy, settings):
+    loop = asyncio.get_running_loop()
+    timeout = settings.tcp_conn_timeout
+    if proxy:
+        addr, port = proxy[0], proxy[1]
+        transport, _ = await loop.create_connection(lambda: protocol, addr, port)
+    elif settings.prefer_ipv4:
+        try:
+            fut = loop.create_connection(lambda: protocol, addr, port, family=socket.AF_INET)
+            transport, _ = await asyncio.wait_for(fut, timeout=timeout)
+        except socket.gaierror:
+            fut = loop.create_connection(lambda: protocol, addr, port, family=socket.AF_INET6)
+            transport, _ = await asyncio.wait_for(fut, timeout=timeout)
+    else:
+        try:
+            fut = loop.create_connection(lambda: protocol, addr, port, happy_eyeballs_delay=0.25)
+            transport, _ = await asyncio.wait_for(fut, timeout=timeout)
+        except TypeError:
+            fut = loop.create_connection(lambda: protocol, addr, port)
+            transport, _ = await asyncio.wait_for(fut, timeout=timeout)
+    return transport
