@@ -69,6 +69,7 @@ class HxsStreamContext(asyncio.Protocol):
         self._reading.set()
         self._transport = None
         self._connected = False
+        self._connection_lost = False
 
     def connection_made(self, transport):
         self._transport = transport
@@ -83,7 +84,8 @@ class HxsStreamContext(asyncio.Protocol):
             self._send_buffer = None
 
     def connection_lost(self, _):
-        self._conn.close_stream(self._stream_id)
+        self._connection_lost = True
+        self.close()
 
     def pause_writing(self):
         self._reading.clear()
@@ -148,8 +150,9 @@ class HxsStreamContext(asyncio.Protocol):
     def eof_received(self):
         if self._recv_buffer:
             self._eof_pending = True
-            return
+            return not self.stream_status & EOF_FROM_CONN
         self._eof_received()
+        return not self.stream_status & EOF_FROM_CONN
 
     def _eof_received(self):
         if not self.stream_status & EOF_FROM_ENDPOINT:
@@ -162,8 +165,6 @@ class HxsStreamContext(asyncio.Protocol):
         if self._closing:
             return
         self._closing = True
-        if self._transport:
-            self._transport.close()
         if self._recv_buffer:
             return
         self._close()
@@ -173,11 +174,16 @@ class HxsStreamContext(asyncio.Protocol):
             self._conn.send_frame(RST_STREAM, 0, self._stream_id)
             self.stream_status = CLOSED
         self._reading.set()
+        if self._transport:
+            self._transport.close()
+        self._conn.close_stream(self._stream_id)
 
     def is_closing(self):
         return self._closing
 
     def write(self, data):
+        if self._connection_lost:
+            return
         if self._connected:
             self._transport.write(data)
         else:
@@ -359,7 +365,7 @@ class HxsForwardContextProxy(HxsForwardContext):
         if not self._connected:
             connected, data = self._proxy_client.feed(data)
             if connected is False:
-                self.close()
+                self._conn.close_stream(self._stream_id)
             if not connected and data:
                 self._transport.write(data)
             if connected:
@@ -537,7 +543,7 @@ class HxsCommon(HC):
                         await self.stream_writer_drain(stream_id, len(data))
                     except ConnectionError:
                         # remote closed, reset stream
-                        asyncio.ensure_future(self.close_stream(stream_id))
+                        self.close_stream(stream_id)
                 elif frame_type == HEADERS:  # 1
                     if self._next_stream_id == stream_id:
                         # open new stream
@@ -561,12 +567,14 @@ class HxsCommon(HC):
                             if stream_id in self._stream_ctx:
                                 self._stream_ctx[stream_id].write_eof()
                             if self._stream_ctx[stream_id].stream_status == CLOSED:
-                                asyncio.ensure_future(self.close_stream(stream_id))
+                                self.close_stream(stream_id)
                     else:
                         self.logger.error('frame_type == HEADERS, stream_id %s, flags: %s', stream_id, frame_flags)
                 elif frame_type == RST_STREAM:  # 3
+                    if stream_id not in self._stream_ctx:
+                        continue
                     self._stream_ctx[stream_id].stream_status = CLOSED
-                    asyncio.ensure_future(self.close_stream(stream_id))
+                    self.close_stream(stream_id)
                 elif frame_type == SETTINGS:
                     settings = 0
                     payload_ = b''
@@ -664,7 +672,7 @@ class HxsCommon(HC):
                 self.logger.warning('connect %s:%s connected, %.3fs', host, port, timelog)
             # client may reset the connection
             # TODO: maybe keep this connection for later?
-            if self._stream_ctx[stream_id].stream_status == CLOSED:
+            if stream_id not in self._stream_ctx:
                 self.logger.warning('connect %s:%s connected, client closed', host, port)
                 transport.close()
                 return
@@ -696,8 +704,6 @@ class HxsCommon(HC):
         self._send_frame_data(ct_)
 
     def send_one_data_frame(self, stream_id, data, more_padding=False, frag=False):
-        if self._stream_ctx[stream_id].stream_status & EOF_FROM_ENDPOINT:
-            return
         payload = struct.pack('>H', len(data)) + data
         diff = self.FRAME_SIZE_LIMIT - len(data)
         if 0 <= diff < self.FRAME_SIZE_LIMIT * 0.05:
@@ -771,7 +777,7 @@ class HxsCommon(HC):
                 if not self._stream_ctx[stream_id].fc_enable:
                     self.send_frame(WINDOW_UPDATE, 0, stream_id)
             except OSError:
-                await self.close_stream(stream_id)
+                self.close_stream(stream_id)
         self._stream_ctx[stream_id].data_recv(data_len)
 
     def send_dgram2(self, client_id, udp_sid, data):
