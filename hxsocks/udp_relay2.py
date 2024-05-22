@@ -75,8 +75,8 @@ class UserRelay:
     def addr_minus(self, callback_info):
         self.addr_count[callback_info] -= 1
         if self.addr_count[callback_info] <= 0:
-            callback, stream_id = callback_info
-            callback.close_relay(stream_id)
+            callback, client_addr = callback_info
+            callback.close_relay(client_addr)
 
     def remove_relay(self, relay):
         self.relay_list.remove(relay)

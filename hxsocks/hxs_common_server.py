@@ -745,13 +745,6 @@ class HxsCommon(HC):
                                       self.user,
                                       0)
 
-    def close_relay(self, stream_id):
-        if self._stream_ctx[stream_id].stream_status == OPEN:
-            self._stream_ctx[stream_id].stream_status = CLOSED
-            self.send_frame(RST_STREAM, 0, stream_id)
-        if stream_id in self._stream_ctx:
-            del self._stream_ctx[stream_id]
-
     async def stream_writer_drain(self, stream_id, data_len):
         if self._settings_async_drain or self._stream_ctx[stream_id].fc_enable:
             asyncio.ensure_future(self.async_drain(stream_id, data_len))

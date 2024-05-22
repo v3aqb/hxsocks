@@ -29,12 +29,12 @@ set_logger()
 
 
 class UDPRelay:
-    def __init__(self, parent, client, stream_id, settings):
+    def __init__(self, parent, client, client_addr, settings):
         self.parent = parent
         self.logger = logging.getLogger('udp_relay')
         self.logger.setLevel(settings.log_level)
         self.client = client
-        self.stream_id = stream_id
+        self.client_addr = client_addr
         self.timeout = settings.udp_timeout
         self.mode = settings.udp_mode
         self.remote_stream = None
@@ -119,7 +119,7 @@ class UDPRelay:
             buf += struct.pack(b'>H', port)
             buf += dgram
             try:
-                await self.parent.on_remote_recv(self.stream_id, buf)
+                await self.parent.on_remote_recv(self.client_addr, buf)
             except KeyError:
                 self.logger.error('KeyError on parent.on_remote_recv')
                 break
@@ -128,7 +128,7 @@ class UDPRelay:
         if len(self.remote_addr) > 1:
             self.logger.warning('    remote_addr: %d, last_addr: %s', len(self.remote_addr), self.last_addr)
         self.remote_stream.close()
-        self.parent.close_relay(self.stream_id)
+        self.parent.close_relay(self.client_addr)
 
     def close(self):
         self._close = True
