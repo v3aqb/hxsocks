@@ -103,7 +103,7 @@ class HxsServer:
         asyncio.ensure_future(self._start())
 
     async def _start(self):
-        self.logger.warning('starting server: %s', self.address)
+        self.logger.warning('starting server: %s, proxy: %r', self.address, self.proxy)
         self.server = await asyncio.start_server(self.handle,
                                                  self.address[0],
                                                  self.address[1],

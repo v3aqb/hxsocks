@@ -42,7 +42,7 @@ class hxs3_server:
         self.server = None
 
     def start_service(self):
-        self.logger.warning('starting hxs3 server at %r', self.address)
+        self.logger.warning('starting hxs3 server at %r, proxy: %r', self.address, self.proxy)
         asyncio.ensure_future(self._start())
 
     async def _start(self):
