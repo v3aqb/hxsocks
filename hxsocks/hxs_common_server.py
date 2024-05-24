@@ -342,41 +342,6 @@ class HxsForwardContext(HxsStreamContext):
         self.window_update(float('+inf'))
 
 
-class HxsForwardContextProxy(HxsForwardContext):
-    def __init__(self, conn, stream_id, host, send_w, recv_w, proxy: str = '', proxy_auth=None):
-        super().__init__(conn, stream_id, host, send_w, recv_w)
-
-        self._proxy = proxy
-        self._proxy_auth = proxy_auth
-        self._proxy_client = None
-
-    def connection_made(self, transport):
-        self._transport = transport
-        if self._proxy:
-            from .proxy_client import ProxyClient
-            self._proxy_client = ProxyClient(self._proxy, self._proxy_auth, self.host)
-            data = self._proxy_client.connect()
-            self._transport.write(data)
-        else:
-            self._connection_made()
-
-    def data_received(self, data):
-        '''data recieved from endpoint, send to connection'''
-        if not self._connected:
-            connected, data = self._proxy_client.feed(data)
-            if connected is False:
-                self._conn.close_stream(self._stream_id)
-            if not connected and data:
-                self._transport.write(data)
-            if connected:
-                self._connection_made()
-                self._proxy_client = None
-                if data:
-                    self.data_received(data)
-            return
-        super().data_received(data)
-
-
 class ReadFrameError(Exception):
     def __init__(self, err):
         super().__init__()
@@ -643,8 +608,7 @@ class HxsCommon(HC):
         # DISABLE PER_STREAM FLOW CONTROL
         send_w = 0
         recv_w = RECV_WINDOW_SIZE if send_w else 0
-        proxy = 'socks5' if self._proxy else ''
-        self._stream_ctx[stream_id] = HxsForwardContextProxy(self, stream_id, (host, port), send_w, recv_w, proxy=proxy)
+        self._stream_ctx[stream_id] = HxsForwardContext(self, stream_id, (host, port), send_w, recv_w)
         self.name = self.server_addr[1]
         try:
             self.user_mgr.user_access_ctrl(self.server_addr[1], (host, port), self.client_address, self.user, 0)

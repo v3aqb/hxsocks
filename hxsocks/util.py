@@ -74,43 +74,35 @@ async def connect_socks5(addr, port, proxy):
 
 
 async def open_connection(addr, port, proxy, settings):
-    # do security check here
-    data = await request_is_loopback(addr)
-    if data:
-        raise ValueError('connect to localhost denied!')
-    timeout = settings.tcp_conn_timeout
-    nodelay = settings.tcp_nodelay
     # create connection
-    if proxy:
-        fut = connect_socks5(addr, port, proxy)
-        remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
-    elif settings.prefer_ipv4:
-        try:
-            fut = asyncio.open_connection(addr, port, limit=65536, family=socket.AF_INET)
-            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
-        except socket.gaierror:
-            fut = asyncio.open_connection(addr, port, limit=65536, family=socket.AF_INET6)
-            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
-    else:
-        try:
-            fut = asyncio.open_connection(addr, port, limit=65536, happy_eyeballs_delay=0.25)
-            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
-        except TypeError:
-            fut = asyncio.open_connection(addr, port, limit=65536)
-            remote_reader, remote_writer = await asyncio.wait_for(fut, timeout=timeout)
-    if nodelay:
-        soc = remote_writer.transport.get_extra_info('socket')
-        soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    return remote_reader, remote_writer
+    loop = asyncio.get_running_loop()
+    reader = asyncio.StreamReader(limit=65535, loop=loop)
+    protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
+    transport = await create_connection(protocol, addr, port, proxy, settings)
+    # protocol is for Reader, transport is for Writer
+    writer = asyncio.StreamWriter(transport, protocol, reader, loop)
+    return reader, writer
 
 
 async def create_connection(protocol, addr, port, proxy, settings):
+    # do security check here
+    is_loopback = await request_is_loopback(addr)
+    if is_loopback:
+        raise ValueError('connect to localhost denied!')
+
     loop = asyncio.get_running_loop()
     timeout = settings.tcp_conn_timeout
     if proxy:
-        addr, port = proxy[0], proxy[1]
-        transport, _ = await loop.create_connection(lambda: protocol, addr, port)
-    elif settings.prefer_ipv4:
+        p_addr, p_port = proxy[0], proxy[1]
+        from .proxy_client import ProxyClientProtocol
+        connected_cb = loop.create_future()
+        p_protocol = ProxyClientProtocol(protocol, connected_cb, (addr, port),
+                                         proxy='socks5',
+                                         proxy_auth=None)
+        transport, _ = await loop.create_connection(lambda: p_protocol, p_addr, p_port)
+        await connected_cb
+        return transport
+    if settings.prefer_ipv4:
         try:
             fut = loop.create_connection(lambda: protocol, addr, port, family=socket.AF_INET)
             transport, _ = await asyncio.wait_for(fut, timeout=timeout)

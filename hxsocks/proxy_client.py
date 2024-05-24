@@ -1,7 +1,7 @@
 
 import base64
 import struct
-from .transport import ForwardProtocol
+import asyncio
 
 
 class ProxyClient:
@@ -66,3 +66,61 @@ class ProxyClient:
             if len(self._recv_buf) >= resp_len:
                 return True, self._recv_buf[resp_len:]
             return None, b''
+
+
+class ProxyClientProtocol(asyncio.Protocol):
+    '''forward recieved data from transport, write to peer_transport'''
+
+    def __init__(self, next_protocol, connected_cb, addr, proxy='', proxy_auth=None):
+        self._next_protocol = next_protocol
+        self._connected_cb = connected_cb
+        self._addr = addr  # (host, port)
+        self._proxy = proxy
+        self._proxy_auth = proxy_auth  # (username, password)
+        self._transport = None
+        self._proxy_client = None
+
+        self._connected = False
+        self._send_buffer = bytearray()
+
+    def connection_made(self, transport):
+        self._transport = transport
+        if self._proxy:
+            self._proxy_client = ProxyClient(self._proxy, self._proxy_auth, self._addr)
+            connect_req = self._proxy_client.connect()
+            self._transport.write(connect_req)
+        else:
+            self._connection_made()
+
+    def data_received(self, data):
+        connected, data = self._proxy_client.feed(data)
+        if connected is False:
+            self.close()
+        if not connected and data:
+            self._transport.write(data)
+        if connected:
+            self._connection_made(data)
+            self._proxy_client = None
+
+    def _connection_made(self, data=b''):
+        self._next_protocol.connection_made(self._transport)
+        if data:
+            self._next_protocol.data_received(data)
+        self._transport.set_protocol(self._next_protocol)
+        self._connected_cb.set_result(None)
+
+    def connection_lost(self, exc):
+        self._connected_cb.set_exception(ConnectionResetError)
+
+    def pause_writing(self):
+        '''Called when the transport’s buffer goes over the high watermark.'''
+
+    def resume_writing(self):
+        '''Called when the transport’s buffer drains below the low watermark.'''
+
+    def eof_received(self):
+        self._connected_cb.set_exception(ConnectionResetError)
+
+    def close(self):
+        self._connected_cb.set_exception(ConnectionResetError)
+        self._transport.close()
