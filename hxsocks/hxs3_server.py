@@ -63,10 +63,6 @@ class hxs3_server:
             await handler.handle(websocket, path)
         except ConnectionClosed:
             self.logger.error('ConnectionClosed')
-        try:
-            await handler.websocket.close()
-        except ConnectionClosed:
-            pass
 
     async def stop(self):
         self.server.close()
@@ -138,7 +134,10 @@ class hxs3_handler(HxsCommon):
         await self.handle_connection()
         client_pkey = hashlib.md5(client_pkey).digest()
         self.user_mgr.del_key(client_pkey)
-        return
+        try:
+            await self._websocket.close()
+        except ConnectionClosed:
+            pass
 
     async def play_dead(self):
         self.logger.info('enter play_dead')
