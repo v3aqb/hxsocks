@@ -55,6 +55,7 @@ class HxsStreamContext(asyncio.Protocol):
         self.host = host  # (host, port)
 
         self.last_active = time.monotonic()
+        self.drain_lock = asyncio.Lock()
 
         # eof recieved
         self.stream_status = OPEN
