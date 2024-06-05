@@ -174,7 +174,7 @@ class hxs3_handler(HxsCommon):
             try:
                 ct_ = self._sendq.get_nowait()
             except asyncio.QueueEmpty:
-                return
+                break
             if self.connection_lost:
                 self._sendq.task_done()
                 continue
