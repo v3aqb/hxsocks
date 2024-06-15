@@ -3,6 +3,8 @@ hxsocks
 
 A better encrypted socks proxy.
 
+2024.06.16: udp dgram is now rate controled, update client required
+
 2023.10.24: update hxsocks4 protocol, remove some signature
 
 2022.09.26: support shadowsocks 2022-blake3 encryption method (tcp only)

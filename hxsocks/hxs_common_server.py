@@ -249,6 +249,16 @@ class HxsForwardContext(HxsStreamContext):
             if self.send_w <= 0:
                 self._window_open.clear()
 
+    def acquire_nowait(self, size):
+        if not self._window_open.is_set():
+            raise ValueError('windows not open')
+        self.traffic_from_endpoint += size
+        self.sent_counter += size
+        self.last_active = time.monotonic()
+        self.send_w -= size
+        if self.send_w <= 0:
+            self._window_open.clear()
+
     def data_recv(self, size):
         '''data recv from connection, maybe update window'''
         self.traffic_from_conn += size
@@ -587,6 +597,7 @@ class HxsCommon(HC):
                     client_id, udp_sid, data = parse_dgram2(payload)
                     if not self.client_id:
                         self.client_id = client_id
+                    self._stream_ctx[0].data_recv(len(data))
                     await HxsUDPRelayManager.send_dgram(udp_sid, data, self)
             except Exception as err:
                 self.logger.error('read from connection error: %r', err, exc_info=True)
@@ -740,6 +751,10 @@ class HxsCommon(HC):
 
     def send_dgram2(self, client_id, udp_sid, data):
         # remote addr included in data, as shadowsocks format
+        try:
+            self._stream_ctx[0].acquire_nowait(len(data))
+        except ValueError:
+            return
         payload = client_id + udp_sid
         payload += struct.pack(b'!H', len(data))
         payload += data
