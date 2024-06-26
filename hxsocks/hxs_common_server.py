@@ -540,12 +540,14 @@ class HxsCommon(HC):
                                           self._stream_ctx[stream_id].stream_status)
                         if frame_flags & END_STREAM_FLAG:
                             self._stream_ctx[stream_id].stream_status |= EOF_FROM_CONN
-                            if stream_id in self._stream_ctx:
+                            try:
                                 self._stream_ctx[stream_id].write_eof()
+                            except OSError:
+                                self._stream_ctx[stream_id].stream_status = CLOSED
                             if self._stream_ctx[stream_id].stream_status == CLOSED:
                                 self.close_stream(stream_id)
                     else:
-                        self.logger.error('frame_type == HEADERS, stream_id %s, flags: %s', stream_id, frame_flags)
+                        self.logger.error('frame_type == HEADERS, stream_id %s, flags: %s. stream already closed?', stream_id, frame_flags)
                 elif frame_type == RST_STREAM:  # 3
                     if stream_id not in self._stream_ctx:
                         continue
