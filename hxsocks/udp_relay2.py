@@ -1,17 +1,11 @@
 
-import io
 import ipaddress
-import socket
 import struct
 import time
 import logging
 
 import asyncio
 import asyncio_dgram
-
-FULL = 0
-RESTRICTED = 1
-PORTRESTRICTED = 2
 
 logger = logging.getLogger('udp2')
 
@@ -50,6 +44,16 @@ class UserRelay:
         # check relay_sid, for session recovery(Not Implemented)
         # find / get available relay
         # send_dgram, relay return relay_sid
+        remote_ip = ipaddress.ip_address(addr)
+
+        if remote_ip.is_multicast:
+            logger.warning('udp send_dgram, %s, %r, is_multicast, drop', self.user, addr)
+            return
+
+        if remote_ip.is_private:
+            logger.warning('udp send_dgram, %s, %r, is_private, drop', self.user, addr)
+            return
+
         relay_selected = self.find_relay(addr, callback, callback_addr)
         await relay_selected.send_dgram(addr, dgram, callback, callback_addr)
 
@@ -61,7 +65,7 @@ class UserRelay:
             if relay.check(addr, callback, callback_addr):
                 self.addr_plus((callback, callback_addr))
                 return relay
-        relay = UDPRelay(self, self.settings.udp_timeout)
+        relay = UDPRelay2(self, self.settings.udp_timeout)
         self.relay_list.append(relay)
         self.addr_plus((callback, callback_addr))
         return relay
@@ -86,28 +90,7 @@ class UserRelay:
             relay.user_close(callback)
 
 
-def parse_dgram(data):
-    data_io = io.BytesIO(data)
-    addrtype = data_io.read(1)[0]
-    if addrtype == 1:
-        addr = data_io.read(4)
-        addr = socket.inet_ntoa(addr)
-    elif addrtype == 3:
-        addr = data_io.read(1)
-        addr = data_io.read(addr[0])
-        addr = addr.decode('ascii')
-    else:
-        addr = data_io.read(16)
-        addr = socket.inet_ntop(socket.AF_INET6, addr)
-    port = data_io.read(2)
-    port, = struct.unpack('>H', port)
-    addr = (addr, port)
-
-    dgram = data_io.read()
-    return (addr, dgram)
-
-
-class UDPRelay:
+class UDPRelay2:
     def __init__(self, parent, timeout):
         self.parent = parent
         self.timeout = timeout
@@ -189,7 +172,7 @@ class UDPRelay:
         '''send dgram to addr, request come from (callback, callback_addr) with relay_sid
            if relay_sid is invalid, new relay_sid will be assigned.
         '''
-        logger.debug('UDPRelay.send_dgram')
+        logger.debug('UDPRelay2.send_dgram')
         if not self.running:
             await self.bind()
         if remote_addr not in self.callback_info:

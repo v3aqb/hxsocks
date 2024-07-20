@@ -51,7 +51,7 @@ class HxsUDPRelayManager:
                     relay = get_relay2(hxs_conn.client_id, cls.settings)
                 cls.relay_store[client_addr] = relay
             relay = cls.relay_store[client_addr]
-            addr, dgram = parse_dgram(data)
+            addr, dgram = await parse_dgram(data)
             await relay.send_dgram(addr, dgram, cls, client_addr)
 
     @classmethod

@@ -64,11 +64,11 @@ class UDPRelay:
         remote_ip = ipaddress.ip_address(addr)
 
         if remote_ip.is_multicast:
-            self.logger.warning('on_server_recv, %s, %r, is_multicast, drop', self.client, addr)
+            self.logger.warning('udp send_dgram, %s, %r, is_multicast, drop', self.client, addr)
             return
 
         if remote_ip.is_private:
-            self.logger.warning('on_server_recv, %s, %r, is_private, drop', self.client, addr)
+            self.logger.warning('udp send_dgram, %s, %r, is_private, drop', self.client, addr)
             return
 
         self.logger.debug('udp send %s:%d, %d', addr, port, len(dgram))
@@ -143,7 +143,7 @@ class UDPRelay:
         return
 
 
-def parse_dgram(data):
+async def parse_dgram(data):
     data_io = io.BytesIO(data)
     addrtype = data_io.read(1)[0]
     if addrtype == 1:
@@ -158,6 +158,11 @@ def parse_dgram(data):
         addr = socket.inet_ntop(socket.AF_INET6, addr)
     port = data_io.read(2)
     port, = struct.unpack('>H', port)
+
+    if addrtype == 3:
+        loop = asyncio.get_running_loop()
+        addr = await loop.getaddrinfo(addr, port)[0][4][0]
+        addr = ipaddress.ip_address(addr)
 
     dgram = data_io.read()
 
@@ -206,7 +211,7 @@ class UDPRelayServer:
 
         self.logger.debug('on_server_recv, %r', client_addr)
         relay = await self.get_relay(client_addr)
-        addr, dgram = parse_dgram(data)
+        addr, dgram = await parse_dgram(data)
         await relay.send_dgram(addr, dgram, self, client_addr)
 
     async def on_remote_recv(self, client_addr, data):
