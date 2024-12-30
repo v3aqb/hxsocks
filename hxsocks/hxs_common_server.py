@@ -110,9 +110,9 @@ class HxsStreamContext(asyncio.Protocol):
         self._writing = True
         while self._recv_buffer:
             # write buffer to conn
-            more_padding = self._from_endpoint_count < 5
+            more_padding = self._from_endpoint_count < self._conn.MORE_PADDING_COUNT
             data_len = len(self._recv_buffer)
-            frame_size_limit = self._conn.FRAME_SIZE_LIMIT2 if more_padding else self._conn.FRAME_SIZE_LIMIT
+            frame_size_limit = self._conn.MORE_PADDING_SIZE if more_padding else self._conn.FRAME_SPLIT_LIMIT
             if data_len > frame_size_limit and (more_padding or random.random() < self._conn.FRAME_SPLIT_FREQ):
                 data = self._buf_read(random.randint(64, frame_size_limit))
                 await self.send_one_data_frame(data, more_padding, frag=len(data) < data_len)
@@ -358,6 +358,8 @@ class HxsForwardContext(HxsStreamContext):
             self.recv_rate_max = max(self.recv_rate_max, self.recv_counter)
             self.recv_rate = 0.2 * self.recv_counter + self.recv_rate * 0.8
             self.recv_counter = 0
+            if time.monotonic() - self.last_active > self._conn.STREAM_TIMEOUT:
+                self.close()
 
     def close(self):
         super().close()
@@ -388,9 +390,11 @@ class HC:
     PING_SIZE = 256
     PONG_SIZE = 256
     PONG_FREQ = 0.2
-    FRAME_SIZE_LIMIT = 4096 - 22
-    FRAME_SIZE_LIMIT2 = 1024 - 22
+    MORE_PADDING_COUNT = 5
+    MORE_PADDING_SIZE = 1024 - 22
+    MORE_PADDING_RANGE = 512
     FRAME_SPLIT_FREQ = 0.3
+    FRAME_SPLIT_LIMIT = 4096 - 22
     WINDOW_SIZE = (4096, 65536, 1048576 * 4)
 
 
@@ -600,9 +604,9 @@ class HxsCommon(HC):
                     if not self._stream_ctx[stream_id].fc_enable:
                         self._settings_async_drain = True
                         if frame_flags == 0:
-                            self._stream_ctx[stream_id].resume_reading.set()
+                            self._stream_ctx[stream_id].resume_writing()
                         else:
-                            self._stream_ctx[stream_id].resume_reading.clear()
+                            self._stream_ctx[stream_id].pause_writing()
                     else:
                         size = struct.unpack('>I', payload.read(4))[0]
                         self._stream_ctx[stream_id].window_update(size)
@@ -694,15 +698,15 @@ class HxsCommon(HC):
 
     def send_one_data_frame(self, stream_id, data, more_padding=False, frag=False):
         payload = struct.pack('>H', len(data)) + data
-        diff = self.FRAME_SIZE_LIMIT - len(data)
-        if 0 <= diff < self.FRAME_SIZE_LIMIT * 0.05:
+        diff = self.FRAME_SPLIT_LIMIT - len(data)
+        if 0 <= diff < self.FRAME_SPLIT_LIMIT * 0.05:
             padding = bytes(diff)
         elif self.bufsize - len(data) < 255:
             padding = bytes(self.bufsize - len(data))
         else:
-            diff = 1024 - len(data)
+            diff = self.MORE_PADDING_SIZE - len(data)
             if diff > 0 and more_padding:
-                padding_len = random.randint(max(diff - 100, 0), diff + 512)
+                padding_len = random.randint(max(diff - 100, 0), diff + self.MORE_PADDING_RANGE)
             else:
                 padding_len = random.randint(8, 255)
             padding = bytes(padding_len)
@@ -733,6 +737,8 @@ class HxsCommon(HC):
                                       self.client_address,
                                       self.user,
                                       0)
+        if len(self._stream_ctx) > 50:
+            self.logger.info('active stream count: %d', len(self._stream_ctx)-1)
 
     async def stream_writer_drain(self, stream_id, data_len):
         if self._settings_async_drain or self._stream_ctx[stream_id].fc_enable:
