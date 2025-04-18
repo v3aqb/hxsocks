@@ -35,9 +35,6 @@ from hxsocks.hxs_common_server import HANDSHAKE_SIZE, CTX, CLIENT_WRITE_BUFFER, 
 
 class HXsocks4Handler:
     bufsize = 65535
-    table = {}
-    for i in range(256):
-        table[i] = i & 0b01111111
 
     def __init__(self, server):
         self.server = server
@@ -112,7 +109,14 @@ class HXsocks4Handler:
 
         self.logger.debug('client_address: %s', self.client_address)
 
-        pklen = header.read(1)[0]  # 91, 120, 158
+        ver = header.read(1)[0]  # 91, 120, 158
+
+        if ver in (91, 120, 158):
+            await self.handle_hxs4(header, b85encode, pklen=ver)
+        else:
+            self.logger.error('unknown ver: %s', ver)
+
+    async def handle_hxs4(self, header, b85encode, pklen):
         client_pkey = header.read(pklen)
         client_auth = header.read(32)
         mode = header.read(1)[0]
@@ -141,10 +145,10 @@ class HXsocks4Handler:
         reply = self.encryptor.encrypt(reply)
         if b85encode:
             reply = base64.b85encode(reply)
-        client_writer.write(reply)
+        self.client_writer.write(reply)
 
-        conn = Hxs2Connection(client_reader,
-                              client_writer,
+        conn = Hxs2Connection(self.client_reader,
+                              self.client_writer,
                               client,
                               shared_secret,
                               mode_s,
@@ -158,7 +162,6 @@ class HXsocks4Handler:
         self.user_mgr.del_key(client_pkey)
         if result:
             await self.play_dead()
-        return
 
     async def play_dead(self):
         count = random.randint(12, 30)
