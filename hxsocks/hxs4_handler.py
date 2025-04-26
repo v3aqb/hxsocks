@@ -119,7 +119,6 @@ class HXsocks4Handler:
     async def handle_hxs4(self, header, b85encode, pklen):
         client_pkey = header.read(pklen)
         client_auth = header.read(32)
-        mode = header.read(1)[0]
 
         try:
             client, reply, shared_secret = self.user_mgr.hxs2_auth(client_pkey, client_auth)
@@ -129,12 +128,6 @@ class HXsocks4Handler:
             await self.play_dead()
             return
 
-        mode_s = 0
-        if mode & 1:
-            mode_s |= 1
-        if mode & 2 and 'rc4' in method_supported:
-            mode_s |= 2
-        reply += bytes((mode_s, ))
         if b85encode:
             padding_len_low = math.ceil((HANDSHAKE_SIZE // 2 - len(reply) * 0.25 - 8) * 0.8)
             padding_len_high = math.ceil((HANDSHAKE_SIZE - len(reply) * 0.25 - 8) * 0.8)
@@ -151,7 +144,6 @@ class HXsocks4Handler:
                               self.client_writer,
                               client,
                               shared_secret,
-                              mode_s,
                               self.server.proxy,
                               self.user_mgr,
                               self.address,

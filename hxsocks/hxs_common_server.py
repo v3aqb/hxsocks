@@ -401,8 +401,7 @@ class HC:
 class HxsCommon(HC):
     bufsize = 65535 - 22
 
-    def __init__(self, mode):
-        self._mode = mode
+    def __init__(self):
         self._skey = b''
         self._cipher = None
         self.logger = None
@@ -441,12 +440,6 @@ class HxsCommon(HC):
             frame_data = self._cipher.decrypt(frame_data)
         else:
             error = None
-            if self._mode & 1:
-                self.bufsize += 16
-                self._cipher = EncryptorStream(self._skey, 'rc4-md5', check_iv=False)
-                self._skey = None
-                frame_data = self._cipher.decrypt(frame_data)
-                return frame_data
             for method in HXS2_METHOD:
                 try:
                     cipher = AEncryptor(self._skey, method, CTX, check_iv=False)

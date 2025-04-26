@@ -109,11 +109,6 @@ class hxs3_handler(HxsCommon):
         pklen = data.read(1)[0]
         client_pkey = data.read(pklen)
         client_auth = data.read(32)
-        mode = data.read(1)[0]
-
-        self._mode = 0
-        if mode & 1:
-            self._mode |= 1
 
         try:
             client, reply, self._skey = self.user_mgr.hxs2_auth(client_pkey, client_auth)
@@ -124,8 +119,7 @@ class hxs3_handler(HxsCommon):
             await self.play_dead()
             return
 
-        reply = reply + chr(self._mode).encode() + \
-            bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
+        reply = reply + bytes(random.randint(HANDSHAKE_SIZE // 2, HANDSHAKE_SIZE))
         try:
             await self._websocket.send(reply)
         except ConnectionClosed:
